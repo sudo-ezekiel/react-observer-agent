@@ -1,4 +1,7 @@
+![ShowCase](https://github.com/user-attachments/assets/84c38dc6-7f62-4c37-8d96-3b3eac489140)
+
 # react-observer-agent
+
 
 `react-observer-agent` is an **experimental project** by a solo developer exploring whether it's possible to build an AI agent system that:
 
