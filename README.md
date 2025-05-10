@@ -1,7 +1,5 @@
 # react-observer-agent
 
-## 🔬 What This Is
-
 `react-observer-agent` is an **experimental project** by a solo developer exploring whether it's possible to build an AI agent system that:
 
 - Observes a live React app’s state and UI
