@@ -1,9 +1,6 @@
 # react-observer-agent
 
-## 🚧 Project Status & Vision
-
-
-### 🔬 What This Is
+## 🔬 What This Is
 
 `react-observer-agent` is an **experimental project** by a solo developer exploring whether it's possible to build an AI agent system that:
 
@@ -52,7 +49,7 @@ This is a personal research initiative — not a commercial product.
 
 ---
 
-### 🎯 Why I'm Building It
+## 🎯 Why I'm Building It
 
 Most "AI integrations" in frontend apps today are:
 - Shallow (just chats or autocomplete)
@@ -67,7 +64,7 @@ I'm interested in pushing this further — to see if an AI can:
 
 ---
 
-### 🧪 What I Want to Learn
+## 🧪 What I Want to Learn
 
 - Can an AI agent understand enough about a live React app to be useful?
 - Can state and action exposure be automated with zero glue code?
@@ -76,7 +73,7 @@ I'm interested in pushing this further — to see if an AI can:
 
 ---
 
-### 🛣️ Roadmap (Experimental Goals)
+## 🛣️ Roadmap (Experimental Goals)
 
 - 🔜 Manual state observation + tool registry + OpenAI support
 - 🔜 DOM awareness + page context mapping
@@ -87,7 +84,7 @@ I'm interested in pushing this further — to see if an AI can:
 
 ---
 
-### ⚠️ Disclaimer
+## ⚠️ Disclaimer
 
 This is a solo experiment.  
 It is **not production-ready**.  
