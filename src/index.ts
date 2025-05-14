@@ -2,6 +2,10 @@
 export { registerTool } from './tools/registerTool';
 export { validateToolNames } from './tools/validateToolNames';
 
+// Provider
+export { AIAgentProvider } from './provider/AIAgentProvider';
+export { useAgent } from './provider/useAgent';
+
 // Types
 export type {
   ToolDefinition,
