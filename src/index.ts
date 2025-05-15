@@ -6,6 +6,11 @@ export { validateToolNames } from './tools/validateToolNames';
 export { AIAgentProvider } from './provider/AIAgentProvider';
 export { useAgent } from './provider/useAgent';
 
+// Permissions
+export { filterState } from './permissions/filterState';
+export { filterTools } from './permissions/filterTools';
+export { validateToolCall } from './permissions/validateToolCall';
+
 // Types
 export type {
   ToolDefinition,
