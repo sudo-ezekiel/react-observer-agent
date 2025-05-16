@@ -138,3 +138,13 @@ export interface AIAgentProviderProps {
   options?: AgentOptions;
   children: React.ReactNode;
 }
+
+// --- Adapter Config ---
+
+export interface OpenAIAdapterConfig {
+  apiKey?: string;
+  model?: string;
+  baseURL?: string;
+  temperature?: number;
+  headers?: Record<string, string>;
+}

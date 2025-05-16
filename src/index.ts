@@ -11,6 +11,9 @@ export { filterState } from './permissions/filterState';
 export { filterTools } from './permissions/filterTools';
 export { validateToolCall } from './permissions/validateToolCall';
 
+// Adapters
+export { openAIAdapter } from './adapters/openai';
+
 // Types
 export type {
   ToolDefinition,
@@ -33,4 +36,5 @@ export type {
   LLMToolCall,
   LLMToolDefinition,
   ConversationMessage,
+  OpenAIAdapterConfig,
 } from './types';
