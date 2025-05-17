@@ -4,11 +4,15 @@ import React from 'react';
 import { AIAgentProvider } from './AIAgentProvider';
 import { useAgent } from './useAgent';
 import { registerTool } from '../tools/registerTool';
-import type { AgentResponse, ModelAdapter, PermissionsConfig, ToolDefinition } from '../types';
+import type { AgentResponse, ModelAdapter, ModelResponse, PermissionsConfig, ToolDefinition } from '../types';
 
-function createMockAdapter(): ModelAdapter {
+function createMockAdapter(response?: Partial<ModelResponse>): ModelAdapter {
   return {
-    sendMessage: vi.fn(),
+    sendMessage: vi.fn().mockResolvedValue({
+      content: '',
+      toolCalls: [],
+      ...response,
+    }),
   };
 }
 
@@ -88,7 +92,7 @@ describe('useAgent', () => {
 });
 
 describe('send()', () => {
-  it('returns a stub response with empty message and toolCalls', async () => {
+  it('returns a response with empty message and toolCalls', async () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
 
     render(

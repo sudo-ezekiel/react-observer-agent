@@ -4,8 +4,10 @@ import type {
   AgentResponse,
   AIAgentProviderProps,
   ConversationEntry,
+  ConversationMessage,
 } from '../types';
 import { validateToolNames } from '../tools/validateToolNames';
+import { executeAgentLoop } from './executeAgentLoop';
 
 export const AgentContextValue = createContext<AgentContext | null>(null);
 
@@ -44,6 +46,9 @@ export function AIAgentProvider({
     setLastResponse(null);
   }, []);
 
+  const historyRef = useRef(history);
+  historyRef.current = history;
+
   const send = useCallback(async (message: string): Promise<AgentResponse> => {
     setIsProcessing(true);
 
@@ -56,11 +61,20 @@ export function AIAgentProvider({
     setHistory((prev) => [...prev, userEntry]);
 
     try {
-      // Stub response — real execution loop will be implemented in Phase 7
-      const response: AgentResponse = {
-        message: '',
-        toolCalls: [],
-      };
+      // Build conversation history for the LLM from current entries
+      const conversationHistory: ConversationMessage[] = historyRef.current.map((entry) => ({
+        role: entry.role,
+        content: entry.content,
+      }));
+
+      const response = await executeAgentLoop(message, {
+        model: modelRef.current,
+        state: stateRef.current,
+        tools: toolsRef.current,
+        permissions: permissionsRef.current,
+        options: optionsRef.current,
+        conversationHistory,
+      });
 
       const assistantEntry: ConversationEntry = {
         role: 'assistant',
