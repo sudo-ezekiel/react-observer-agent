@@ -35,6 +35,10 @@ export async function executeAgentLoop(
   // 1. Resolve & filter state
   const stateSnapshot = createStateSnapshot(state, permissions.canAccess, debug);
 
+  if (debug) {
+    console.log('[react-observer-agent] State snapshot:', stateSnapshot);
+  }
+
   // 2. Filter tools by canExecute
   const allowedTools = filterTools(tools, permissions.canExecute);
   const llmTools: LLMToolDefinition[] = allowedTools
@@ -44,6 +48,10 @@ export async function executeAgentLoop(
       description: t.description!,
       parameters: t.parameters!,
     }));
+
+  if (debug) {
+    console.log('[react-observer-agent] Available tools:', llmTools.map((t) => t.name));
+  }
 
   // Build tool lookup
   const toolMap = new Map(allowedTools.map((t) => [t.name, t]));
@@ -66,12 +74,29 @@ export async function executeAgentLoop(
     }
 
     // 4. Send to LLM
-    const modelResponse = await model.sendMessage({
+    const modelRequest = {
       messages,
       tools: llmTools,
       state: stateSnapshot,
       systemPrompt: options?.systemPrompt,
-    });
+    };
+
+    if (debug) {
+      console.log('[react-observer-agent] LLM request:', {
+        messageCount: modelRequest.messages.length,
+        toolCount: modelRequest.tools.length,
+        hasSystemPrompt: !!modelRequest.systemPrompt,
+      });
+    }
+
+    const modelResponse = await model.sendMessage(modelRequest);
+
+    if (debug) {
+      console.log('[react-observer-agent] LLM response:', {
+        content: modelResponse.content?.slice(0, 200),
+        toolCalls: modelResponse.toolCalls?.map((tc) => tc.name),
+      });
+    }
 
     // 5a. Text-only response
     if (!modelResponse.toolCalls || modelResponse.toolCalls.length === 0) {
@@ -191,6 +216,11 @@ export async function executeAgentLoop(
       try {
         const result = await toolDef.handler(llmCall.arguments);
         const status = toolDef.confirm ? 'confirmed' : 'success';
+
+        if (debug) {
+          console.log(`[react-observer-agent] Tool "${llmCall.name}" executed:`, { status, result });
+        }
+
         const toolResult: ToolCallResult = {
           toolName: llmCall.name,
           args: llmCall.arguments,
