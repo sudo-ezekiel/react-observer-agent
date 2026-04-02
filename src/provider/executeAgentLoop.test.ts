@@ -290,7 +290,7 @@ describe('executeAgentLoop', () => {
     expect(result.toolCalls[0].result).toBe('Tool broke');
   });
 
-  it('filters state by canAccess before sending to LLM', async () => {
+  it('sends empty state object to LLM (pull-based)', async () => {
     const adapter = mockAdapter({ content: 'hello' });
 
     await executeAgentLoop('Hello', {
@@ -302,8 +302,7 @@ describe('executeAgentLoop', () => {
     });
 
     const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(callArgs.state).toEqual({ cart: ['item'] });
-    expect('secret' in callArgs.state).toBe(false);
+    expect(callArgs.state).toEqual({});
   });
 
   it('includes systemPrompt in LLM request', async () => {
@@ -319,22 +318,173 @@ describe('executeAgentLoop', () => {
     });
 
     const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(callArgs.systemPrompt).toBe('You are a test assistant.');
+    expect(callArgs.systemPrompt).toContain('You are a test assistant.');
   });
 
-  it('uses state getter function', async () => {
+  it('includes stateManifest in LLM request', async () => {
     const adapter = mockAdapter({ content: 'Got it' });
-    const getter = () => ({ count: 42 });
 
     await executeAgentLoop('Check count', {
       model: adapter,
-      state: getter,
+      state: () => ({ count: 42 }),
       tools: [],
       permissions: { canAccess: ['count'], canExecute: [] },
       conversationHistory: [],
     });
 
     const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(callArgs.state).toEqual({ count: 42 });
+    expect(callArgs.stateManifest).toEqual([{ key: 'count', description: 'count' }]);
+    expect(callArgs.state).toEqual({});
+  });
+
+  it('handles __readState tool call and returns requested state', async () => {
+    const adapter = mockAdapter(
+      // LLM calls readState to get cart
+      {
+        content: null,
+        toolCalls: [{ id: 'rs_1', name: '__readState', arguments: { keys: ['cart'] } }],
+      },
+      // LLM responds with text after reading state
+      { content: 'You have 2 items.' },
+    );
+
+    const result = await executeAgentLoop('What is in my cart?', {
+      model: adapter,
+      state: { cart: ['item1', 'item2'], secret: 'hidden' },
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      conversationHistory: [],
+    });
+
+    expect(result.message).toBe('You have 2 items.');
+    // readState is internal — not in toolCalls
+    expect(result.toolCalls).toEqual([]);
+    expect(adapter.sendMessage).toHaveBeenCalledTimes(2);
+
+    // Verify the tool result message sent back to LLM
+    const secondCall = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    const toolMsg = secondCall.messages.find(
+      (m: { role: string; toolCallId?: string }) => m.role === 'tool' && m.toolCallId === 'rs_1',
+    );
+    expect(JSON.parse(toolMsg.content)).toEqual({ cart: ['item1', 'item2'] });
+  });
+
+  it('readState filters out keys not in canAccess', async () => {
+    const adapter = mockAdapter(
+      {
+        content: null,
+        toolCalls: [
+          { id: 'rs_1', name: '__readState', arguments: { keys: ['cart', 'secret'] } },
+        ],
+      },
+      { content: 'Only cart returned.' },
+    );
+
+    await executeAgentLoop('Show me everything', {
+      model: adapter,
+      state: { cart: ['item'], secret: 'x' },
+      tools: defaultTools(),
+      permissions: { canAccess: ['cart'], canExecute: ['addToCart'] },
+      conversationHistory: [],
+    });
+
+    const secondCall = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    const toolMsg = secondCall.messages.find(
+      (m: { role: string; toolCallId?: string }) => m.role === 'tool' && m.toolCallId === 'rs_1',
+    );
+    const parsed = JSON.parse(toolMsg.content);
+    expect(parsed).toEqual({ cart: ['item'] });
+    expect('secret' in parsed).toBe(false);
+  });
+
+  it('readState followed by tool call works in multi-turn', async () => {
+    const adapter = mockAdapter(
+      // Turn 1: read state
+      {
+        content: null,
+        toolCalls: [{ id: 'rs_1', name: '__readState', arguments: { keys: ['cart'] } }],
+      },
+      // Turn 2: execute a tool
+      {
+        content: null,
+        toolCalls: [{ id: 'call_1', name: 'addToCart', arguments: { productId: 'abc' } }],
+      },
+      // Turn 3: final response
+      { content: 'Added to cart!' },
+    );
+
+    const result = await executeAgentLoop('Add sneakers', {
+      model: adapter,
+      state: { cart: [] },
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      conversationHistory: [],
+    });
+
+    expect(result.message).toBe('Added to cart!');
+    // Only the real tool call, not readState
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0].toolName).toBe('addToCart');
+    expect(adapter.sendMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it('includes __readState tool in LLM tools when canAccess has keys', async () => {
+    const adapter = mockAdapter({ content: 'hello' });
+
+    await executeAgentLoop('Hi', {
+      model: adapter,
+      state: { count: 1 },
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      conversationHistory: [],
+    });
+
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const toolNames = callArgs.tools.map((t: { name: string }) => t.name);
+    expect(toolNames).toContain('__readState');
+  });
+
+  it('does not include __readState when canAccess is empty', async () => {
+    const adapter = mockAdapter({ content: 'hello' });
+
+    await executeAgentLoop('Hi', {
+      model: adapter,
+      state: {},
+      tools: [],
+      permissions: { canAccess: [], canExecute: [] },
+      conversationHistory: [],
+    });
+
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const toolNames = callArgs.tools.map((t: { name: string }) => t.name);
+    expect(toolNames).not.toContain('__readState');
+  });
+
+  it('uses stateDescriptions in manifest', async () => {
+    const adapter = mockAdapter({ content: 'Got it' });
+
+    await executeAgentLoop('Check', {
+      model: adapter,
+      state: { user: { name: 'Alice' }, cart: [] },
+      tools: [],
+      permissions: {
+        canAccess: ['user', 'cart'],
+        canExecute: [],
+        stateDescriptions: {
+          user: 'Current logged-in user profile',
+          cart: 'Shopping cart contents',
+        },
+      },
+      conversationHistory: [],
+    });
+
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.stateManifest).toEqual([
+      { key: 'user', description: 'Current logged-in user profile' },
+      { key: 'cart', description: 'Shopping cart contents' },
+    ]);
+    // Manifest prompt should be injected into systemPrompt
+    expect(callArgs.systemPrompt).toContain('Current logged-in user profile');
+    expect(callArgs.systemPrompt).toContain('__readState');
   });
 });

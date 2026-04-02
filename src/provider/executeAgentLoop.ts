@@ -14,6 +14,7 @@ import { filterTools } from '../permissions/filterTools';
 import { validateToolCall } from '../permissions/validateToolCall';
 
 const DEFAULT_MAX_TURNS = 5;
+const READ_STATE_TOOL_NAME = '__readState';
 
 interface ExecutionContext {
   model: ModelAdapter;
@@ -24,6 +25,45 @@ interface ExecutionContext {
   conversationHistory: ConversationMessage[];
 }
 
+function buildStateManifest(
+  canAccess: string[],
+  descriptions?: Record<string, string>,
+): { key: string; description: string }[] {
+  return canAccess.map((key) => ({
+    key,
+    description: descriptions?.[key] ?? key,
+  }));
+}
+
+function buildStateManifestPrompt(manifest: { key: string; description: string }[]): string {
+  if (manifest.length === 0) return '';
+  const lines = manifest.map((m) => `- ${m.key}: ${m.description}`);
+  return [
+    'Available application state (use the __readState tool to access specific keys when needed):',
+    ...lines,
+    '',
+    'Only request state keys relevant to the user\'s question. Do not read all keys at once unless necessary.',
+  ].join('\n');
+}
+
+function buildReadStateToolDef(): LLMToolDefinition {
+  return {
+    name: READ_STATE_TOOL_NAME,
+    description: 'Read specific keys from the application state. Only request keys you need.',
+    parameters: {
+      type: 'object',
+      properties: {
+        keys: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'State keys to read',
+        },
+      },
+      required: ['keys'],
+    },
+  };
+}
+
 export async function executeAgentLoop(
   message: string,
   ctx: ExecutionContext,
@@ -32,11 +72,14 @@ export async function executeAgentLoop(
   const debug = options?.debug ?? false;
   const maxTurns = options?.maxTurns ?? DEFAULT_MAX_TURNS;
 
-  // 1. Resolve & filter state
-  const stateSnapshot = createStateSnapshot(state, permissions.canAccess, debug);
+  // 1. Build state manifest (key names + descriptions, no values)
+  const stateManifest = buildStateManifest(
+    permissions.canAccess,
+    permissions.stateDescriptions,
+  );
 
   if (debug) {
-    console.log('[react-observer-agent] State snapshot:', stateSnapshot);
+    console.log('[react-observer-agent] State manifest:', stateManifest.map((m) => m.key));
   }
 
   // 2. Filter tools by canExecute
@@ -48,6 +91,11 @@ export async function executeAgentLoop(
       description: t.description!,
       parameters: t.parameters!,
     }));
+
+  // Add internal readState tool if there are accessible state keys
+  if (stateManifest.length > 0) {
+    llmTools.push(buildReadStateToolDef());
+  }
 
   if (debug) {
     console.log('[react-observer-agent] Available tools:', llmTools.map((t) => t.name));
@@ -62,6 +110,12 @@ export async function executeAgentLoop(
     { role: 'user', content: message },
   ];
 
+  // Build system prompt with state manifest
+  const manifestPrompt = buildStateManifestPrompt(stateManifest);
+  const systemPrompt = [options?.systemPrompt, manifestPrompt]
+    .filter(Boolean)
+    .join('\n\n') || undefined;
+
   const allToolCalls: ToolCallResult[] = [];
   let turns = 0;
   let finalMessage = '';
@@ -73,12 +127,13 @@ export async function executeAgentLoop(
       console.log(`[react-observer-agent] Turn ${turns}/${maxTurns}`);
     }
 
-    // 4. Send to LLM
+    // 4. Send to LLM (state is empty — agent pulls via readState)
     const modelRequest = {
       messages,
       tools: llmTools,
-      state: stateSnapshot,
-      systemPrompt: options?.systemPrompt,
+      state: {} as Record<string, unknown>,
+      systemPrompt,
+      stateManifest,
     };
 
     if (debug) {
@@ -105,7 +160,6 @@ export async function executeAgentLoop(
     }
 
     // 5b. Has tool calls — process them
-    // Add assistant message with tool calls to conversation
     messages.push({
       role: 'assistant',
       content: modelResponse.content ?? '',
@@ -113,6 +167,30 @@ export async function executeAgentLoop(
     });
 
     for (const llmCall of modelResponse.toolCalls) {
+      // Handle internal readState tool
+      if (llmCall.name === READ_STATE_TOOL_NAME) {
+        const args = llmCall.arguments as { keys?: string[] };
+        const requestedKeys = args?.keys ?? [];
+
+        // Filter to only keys in canAccess
+        const allowedKeys = requestedKeys.filter((k) => permissions.canAccess.includes(k));
+        const snapshot = createStateSnapshot(state, allowedKeys, debug);
+
+        if (debug) {
+          console.log('[react-observer-agent] readState requested:', requestedKeys);
+          console.log('[react-observer-agent] readState allowed:', allowedKeys);
+          console.log('[react-observer-agent] readState result:', snapshot);
+        }
+
+        messages.push({
+          role: 'tool',
+          content: JSON.stringify(snapshot),
+          toolCallId: llmCall.id,
+        });
+        // readState is internal — NOT added to allToolCalls or onToolCall
+        continue;
+      }
+
       // i. Validate against canExecute (defense-in-depth)
       if (!validateToolCall(llmCall.name, permissions.canExecute)) {
         const deniedResult: ToolCallResult = {

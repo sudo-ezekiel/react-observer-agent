@@ -26,11 +26,17 @@ export default function App() {
         permissions={{
           canAccess: ['user', 'currentPage', 'cart', 'products'],
           canExecute: ['navigateTo', 'addToCart', 'clearCart'],
+          stateDescriptions: {
+            user: 'Current logged-in user profile (name, email)',
+            currentPage: 'The page the user is currently viewing',
+            cart: 'Shopping cart items and quantities',
+            products: 'Available product catalog with IDs, names, and prices',
+          },
         }}
         options={{
           debug: true,
           systemPrompt:
-            'You are a helpful shopping assistant. You can navigate the app, add products to the cart, and clear the cart. The available products are visible in the app state.',
+            'You are a helpful shopping assistant. You can navigate the app, add products to the cart, and clear the cart. Use readState to check available products before answering questions.',
           onConfirm: async (pending) => {
             return window.confirm(
               `Allow "${pending.toolName}" with args ${JSON.stringify(pending.args)}?`,

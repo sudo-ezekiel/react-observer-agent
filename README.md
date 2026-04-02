@@ -12,38 +12,63 @@
 
 My vision is to be able to use it like this:
 
-```jsx
-import { AIAgentProvider, registerTool, openAIAdapter } from 'react-observer-agent';
+```tsx
+import { AIAgentProvider, registerTool, openAIAdapter, useAgent } from 'react-observer-agent';
 import { useStore } from './store';
 
+// 1. Register tools — actions the agent can perform
 const tools = [
-  registerTool('goToPage', (path) => navigate(path)),
-  registerTool('submitForm', () => handleSubmit()),
+  registerTool('goToPage', (args: { path: string }) => navigate(args.path), {
+    description: 'Navigate to a page in the app',
+    parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+  }),
+  registerTool('submitForm', () => handleSubmit(), {
+    description: 'Submit the current form',
+    confirm: true, // requires user approval before executing
+  }),
 ];
 
-const getAppState = () => {
-  const state = useStore.getState();
-  return {
-    user: state.user,
-    cart: state.cart,
-  };
-};
+// 2. Configure the model adapter (route through your backend in production)
+const model = openAIAdapter({
+  baseURL: '/api/agent',  // your backend proxy holds the real API key
+});
 
+// 3. Wrap your app with the provider
 export default function App() {
   return (
     <AIAgentProvider
-      model={openAIAdapter({ apiKey: process.env.OPENAI_API_KEY })}
-      state={getAppState}
+      model={model}
+      state={() => {
+        const { user, cart } = useStore.getState();
+        return { user, cart };
+      }}
       tools={tools}
       permissions={{
         canAccess: ['user', 'cart'],
         canExecute: ['goToPage', 'submitForm'],
+      }}
+      options={{
+        onConfirm: async (call) => window.confirm(`Allow "${call.toolName}"?`),
       }}
     >
       <YourApp />
     </AIAgentProvider>
   );
 }
+
+// 4. Interact with the agent from any component
+function ChatPanel() {
+  const { send, isProcessing, history } = useAgent();
+  // send("What's in my cart?") → agent reads state, responds with text
+  // send("Go to settings")     → agent calls goToPage({ path: '/settings' })
+}
+```
+
+The `state` prop works with **any state manager** — pass a getter function for Zustand/Redux, or a plain object for vanilla React state:
+
+```tsx
+// Vanilla React — just pass an object
+<AIAgentProvider state={{ user, cart }} ... >
 ```
 
 This is a personal research initiative — not a commercial product.
