@@ -62,6 +62,7 @@ export interface AgentContext {
 export interface PermissionsConfig {
   canAccess: string[];
   canExecute: string[];
+  stateDescriptions?: Record<string, string>;
 }
 
 // --- Model Adapter ---
@@ -90,6 +91,7 @@ export interface ModelRequest {
   tools: LLMToolDefinition[];
   state: Record<string, unknown>;
   systemPrompt?: string;
+  stateManifest?: { key: string; description: string }[];
 }
 
 export interface ModelResponse {
