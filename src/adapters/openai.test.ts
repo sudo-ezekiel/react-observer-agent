@@ -347,6 +347,28 @@ describe('openAIAdapter', () => {
       );
     });
 
+    it('forwards the abort signal to fetch', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+      const controller = new AbortController();
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      await adapter.sendMessage(createRequest({ signal: controller.signal }));
+
+      expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+    });
+
+    it('rethrows an AbortError instead of rewrapping it as a network error', async () => {
+      const abortError = new Error('The operation was aborted');
+      abortError.name = 'AbortError';
+      globalThis.fetch = vi.fn().mockRejectedValue(abortError);
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      await expect(adapter.sendMessage(createRequest())).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+    });
+
     it('throws on non-OK status', async () => {
       globalThis.fetch = mockFetch({ error: { message: 'Rate limit exceeded' } }, 429);
 

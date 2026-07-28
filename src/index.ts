@@ -32,6 +32,7 @@ export type {
   StateSource,
   PendingToolCall,
   ToolCallEvent,
+  SendOptions,
   AgentError,
   JSONSchema,
   LLMToolCall,

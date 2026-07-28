@@ -5,6 +5,7 @@ import type {
   AIAgentProviderProps,
   ConversationEntry,
   ConversationMessage,
+  SendOptions,
 } from '../types';
 import { validateToolNames } from '../tools/validateToolNames';
 import { executeAgentLoop } from './executeAgentLoop';
@@ -49,7 +50,10 @@ export function AIAgentProvider({
   const historyRef = useRef(history);
   historyRef.current = history;
 
-  const send = useCallback(async (message: string): Promise<AgentResponse> => {
+  const send = useCallback(async (
+    message: string,
+    sendOptions?: SendOptions,
+  ): Promise<AgentResponse> => {
     setIsProcessing(true);
 
     const userEntry: ConversationEntry = {
@@ -74,6 +78,7 @@ export function AIAgentProvider({
         permissions: permissionsRef.current,
         options: optionsRef.current,
         conversationHistory,
+        signal: sendOptions?.signal,
       });
 
       const assistantEntry: ConversationEntry = {
@@ -88,7 +93,8 @@ export function AIAgentProvider({
 
       // The loop reports failures it recovered from by returning them, rather
       // than throwing, so the error handler still needs to hear about them.
-      if (response.error) {
+      // A user-initiated cancel is not an application error.
+      if (response.error && response.error.code !== 'ABORTED') {
         optionsRef.current?.onError?.(response.error);
       }
 

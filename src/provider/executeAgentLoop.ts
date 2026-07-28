@@ -26,6 +26,19 @@ interface ExecutionContext {
   permissions: PermissionsConfig;
   options?: AgentOptions;
   conversationHistory: ConversationMessage[];
+  signal?: AbortSignal;
+}
+
+function abortedResponse(toolCalls: ToolCallResult[]): AgentResponse {
+  return {
+    message: '',
+    toolCalls,
+    error: { message: 'Interaction aborted', code: 'ABORTED' },
+  };
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function buildStateManifest(
@@ -71,7 +84,7 @@ export async function executeAgentLoop(
   message: string,
   ctx: ExecutionContext,
 ): Promise<AgentResponse> {
-  const { model, state, tools, permissions, options } = ctx;
+  const { model, state, tools, permissions, options, signal } = ctx;
   const debug = options?.debug ?? false;
   const maxTurns = options?.maxTurns ?? DEFAULT_MAX_TURNS;
 
@@ -138,6 +151,8 @@ export async function executeAgentLoop(
   let completed = false;
 
   while (turns < maxTurns) {
+    if (signal?.aborted) return abortedResponse(allToolCalls);
+
     turns++;
 
     if (debug) {
@@ -151,6 +166,7 @@ export async function executeAgentLoop(
       state: {} as Record<string, unknown>,
       systemPrompt,
       stateManifest,
+      signal,
     };
 
     if (debug) {
@@ -161,7 +177,18 @@ export async function executeAgentLoop(
       });
     }
 
-    const modelResponse = await model.sendMessage(modelRequest);
+    let modelResponse;
+    try {
+      modelResponse = await model.sendMessage(modelRequest);
+    } catch (error) {
+      // An adapter that forwarded the signal rejects rather than resolving.
+      if (isAbortError(error) || signal?.aborted) {
+        return abortedResponse(allToolCalls);
+      }
+      throw error;
+    }
+
+    if (signal?.aborted) return abortedResponse(allToolCalls);
 
     if (debug) {
       console.log('[react-observer-agent] LLM response:', {
@@ -185,6 +212,9 @@ export async function executeAgentLoop(
     });
 
     for (const llmCall of modelResponse.toolCalls) {
+      // Stop before starting any further side effects.
+      if (signal?.aborted) return abortedResponse(allToolCalls);
+
       // Handle internal readState tool
       if (llmCall.name === READ_STATE_TOOL_NAME) {
         const args = llmCall.arguments as { keys?: string[] };

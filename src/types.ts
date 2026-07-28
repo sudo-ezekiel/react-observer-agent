@@ -57,8 +57,13 @@ export interface AgentResponse {
 
 // --- Agent Context (useAgent return type) ---
 
+export interface SendOptions {
+  /** Cancels the interaction. The pending response resolves with an ABORTED error. */
+  signal?: AbortSignal;
+}
+
 export interface AgentContext {
-  send: (message: string) => Promise<AgentResponse>;
+  send: (message: string, options?: SendOptions) => Promise<AgentResponse>;
   isProcessing: boolean;
   history: ConversationEntry[];
   clearHistory: () => void;
@@ -100,6 +105,8 @@ export interface ModelRequest {
   state: Record<string, unknown>;
   systemPrompt?: string;
   stateManifest?: { key: string; description: string }[];
+  /** Adapters should forward this to their transport so requests cancel in flight. */
+  signal?: AbortSignal;
 }
 
 export interface ModelResponse {

@@ -549,6 +549,110 @@ describe('executeAgentLoop', () => {
     expect(callArgs.systemPrompt).toContain('__readState');
   });
 
+  describe('abort', () => {
+    it('returns an ABORTED error without calling the adapter when already aborted', async () => {
+      const adapter = mockAdapter({ content: 'never reached' });
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await executeAgentLoop('hello', {
+        model: adapter,
+        state: {},
+        tools: defaultTools(),
+        permissions: defaultPermissions,
+        conversationHistory: [],
+        signal: controller.signal,
+      });
+
+      expect(result.error?.code).toBe('ABORTED');
+      expect(result.message).toBe('');
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('forwards the signal to the adapter', async () => {
+      const adapter = mockAdapter({ content: 'hi' });
+      const controller = new AbortController();
+
+      await executeAgentLoop('hello', {
+        model: adapter,
+        state: {},
+        tools: defaultTools(),
+        permissions: defaultPermissions,
+        conversationHistory: [],
+        signal: controller.signal,
+      });
+
+      const request = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(request.signal).toBe(controller.signal);
+    });
+
+    it('converts an adapter AbortError into an ABORTED response', async () => {
+      const abortError = new Error('The operation was aborted');
+      abortError.name = 'AbortError';
+      const adapter: ModelAdapter = {
+        sendMessage: vi.fn().mockRejectedValue(abortError),
+      };
+
+      const result = await executeAgentLoop('hello', {
+        model: adapter,
+        state: {},
+        tools: defaultTools(),
+        permissions: defaultPermissions,
+        conversationHistory: [],
+      });
+
+      expect(result.error?.code).toBe('ABORTED');
+    });
+
+    it('stops before running tools when aborted mid-interaction', async () => {
+      const controller = new AbortController();
+      const handler = vi.fn(() => ({ ok: true }));
+      const adapter: ModelAdapter = {
+        sendMessage: vi.fn().mockImplementation(async () => {
+          // The consumer cancels while the model call is in flight.
+          controller.abort();
+          return {
+            content: null,
+            toolCalls: [{ id: 'c1', name: 'addToCart', arguments: { productId: 'x' } }],
+          };
+        }),
+      };
+
+      const result = await executeAgentLoop('add it', {
+        model: adapter,
+        state: {},
+        tools: [
+          registerTool('addToCart', handler, {
+            description: 'Add item to cart',
+            parameters: { type: 'object', properties: {} },
+          }),
+        ],
+        permissions: { canAccess: [], canExecute: ['addToCart'] },
+        conversationHistory: [],
+        signal: controller.signal,
+      });
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(result.error?.code).toBe('ABORTED');
+    });
+
+    it('still rethrows genuine adapter failures', async () => {
+      const adapter: ModelAdapter = {
+        sendMessage: vi.fn().mockRejectedValue(new Error('boom')),
+      };
+
+      await expect(
+        executeAgentLoop('hello', {
+          model: adapter,
+          state: {},
+          tools: defaultTools(),
+          permissions: defaultPermissions,
+          conversationHistory: [],
+        }),
+      ).rejects.toThrow('boom');
+    });
+  });
+
   describe('argument validation', () => {
     it('rejects a call with missing required arguments without running the handler', async () => {
       const handler = vi.fn();

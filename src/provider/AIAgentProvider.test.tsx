@@ -220,6 +220,28 @@ describe('error reporting', () => {
     expect(ctx!.lastResponse?.error?.code).toBe('MAX_TURNS');
   });
 
+  it('does not call onError when the consumer aborts', async () => {
+    const onError = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ options: { onError } })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    let response: AgentResponse | undefined;
+    await act(async () => {
+      response = await ctx!.send('hello', { signal: controller.signal });
+    });
+
+    expect(response!.error?.code).toBe('ABORTED');
+    expect(onError).not.toHaveBeenCalled();
+    expect(ctx!.isProcessing).toBe(false);
+  });
+
   it('does not call onError for a normal response', async () => {
     const onError = vi.fn();
 

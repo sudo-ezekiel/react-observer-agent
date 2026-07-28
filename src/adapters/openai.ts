@@ -74,8 +74,12 @@ export function openAIAdapter(config: OpenAIAdapterConfig): ModelAdapter {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
+          signal: request.signal,
         });
       } catch (error) {
+        // An abort is a caller decision, not a transport failure. Rewrapping it
+        // would hide the AbortError name the agent loop checks for.
+        if (error instanceof Error && error.name === 'AbortError') throw error;
         throw new Error(
           `Network error calling OpenAI API: ${error instanceof Error ? error.message : 'Unknown error'}`,
         );
