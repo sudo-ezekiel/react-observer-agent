@@ -128,6 +128,67 @@ describe('executeAgentLoop', () => {
     expect(result.message).toBe('');
   });
 
+  it('reports a MAX_TURNS error when the turn budget runs out', async () => {
+    const adapter = mockAdapter(
+      ...Array.from({ length: 10 }, () => ({
+        content: null,
+        toolCalls: [{ id: 'call_x', name: 'addToCart', arguments: { productId: 'x' } }],
+      })),
+    );
+
+    const result = await executeAgentLoop('Keep adding', {
+      model: adapter,
+      state: { cart: [] },
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      options: { maxTurns: 2 },
+      conversationHistory: [],
+    });
+
+    expect(result.error?.code).toBe('MAX_TURNS');
+    expect(result.error?.message).toContain('within 2 turns');
+    expect(result.message).toBe('');
+    // Work completed before the budget ran out is still reported.
+    expect(result.toolCalls).toHaveLength(2);
+  });
+
+  it('does not set an error when the agent answers within the budget', async () => {
+    const adapter = mockAdapter(
+      {
+        content: null,
+        toolCalls: [{ id: 'call_1', name: 'addToCart', arguments: { productId: 'a' } }],
+      },
+      { content: 'Added.' },
+    );
+
+    const result = await executeAgentLoop('Add it', {
+      model: adapter,
+      state: { cart: [] },
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      options: { maxTurns: 5 },
+      conversationHistory: [],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.message).toBe('Added.');
+  });
+
+  it('treats a deliberately empty final answer as success, not exhaustion', async () => {
+    const adapter = mockAdapter({ content: '' });
+
+    const result = await executeAgentLoop('hi', {
+      model: adapter,
+      state: {},
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      conversationHistory: [],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.message).toBe('');
+  });
+
   it('rejects tool calls for tools not in canExecute', async () => {
     const adapter = mockAdapter(
       {

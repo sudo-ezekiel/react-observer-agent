@@ -192,6 +192,78 @@ describe('clearHistory()', () => {
   });
 });
 
+describe('error reporting', () => {
+  it('reports a MAX_TURNS error through onError exactly once', async () => {
+    const onError = vi.fn();
+    const model: ModelAdapter = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'increment', arguments: {} }],
+      }),
+    };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider
+        {...createDefaultProps({ model, options: { maxTurns: 2, onError } })}
+      >
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await ctx!.send('keep going');
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0].code).toBe('MAX_TURNS');
+    expect(ctx!.lastResponse?.error?.code).toBe('MAX_TURNS');
+  });
+
+  it('does not call onError for a normal response', async () => {
+    const onError = vi.fn();
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider
+        {...createDefaultProps({
+          model: createMockAdapter({ content: 'all good' }),
+          options: { onError },
+        })}
+      >
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await ctx!.send('hello');
+    });
+
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('reports a thrown adapter failure through onError exactly once', async () => {
+    const onError = vi.fn();
+    const model: ModelAdapter = {
+      sendMessage: vi.fn().mockRejectedValue(new Error('network down')),
+    };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model, options: { onError } })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await ctx!.send('hello');
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0].message).toBe('network down');
+  });
+});
+
 describe('state as function', () => {
   it('accepts a getter function for state', () => {
     let captured: ReturnType<typeof useAgent> | undefined;

@@ -134,6 +134,7 @@ export async function executeAgentLoop(
   const allToolCalls: ToolCallResult[] = [];
   let turns = 0;
   let finalMessage = '';
+  let completed = false;
 
   while (turns < maxTurns) {
     turns++;
@@ -171,6 +172,7 @@ export async function executeAgentLoop(
     // 5a. Text-only response
     if (!modelResponse.toolCalls || modelResponse.toolCalls.length === 0) {
       finalMessage = modelResponse.content ?? '';
+      completed = true;
       break;
     }
 
@@ -358,11 +360,20 @@ export async function executeAgentLoop(
     // Loop continues — send tool results back to LLM
   }
 
-  if (turns >= maxTurns && !finalMessage) {
+  // The model was still calling tools when the turn budget ran out, so it never
+  // got to answer. Surface that as an error rather than an empty message.
+  if (!completed) {
     if (debug) {
       console.warn(`[react-observer-agent] Max turns (${maxTurns}) reached`);
     }
-    finalMessage = '';
+    return {
+      message: '',
+      toolCalls: allToolCalls,
+      error: {
+        message: `Agent did not produce a final response within ${maxTurns} turns`,
+        code: 'MAX_TURNS',
+      },
+    };
   }
 
   return {

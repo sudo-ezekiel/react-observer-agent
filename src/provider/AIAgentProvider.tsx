@@ -85,6 +85,13 @@ export function AIAgentProvider({
 
       setHistory((prev) => [...prev, assistantEntry]);
       setLastResponse(response);
+
+      // The loop reports failures it recovered from by returning them, rather
+      // than throwing, so the error handler still needs to hear about them.
+      if (response.error) {
+        optionsRef.current?.onError?.(response.error);
+      }
+
       return response;
     } catch (error) {
       const agentError = {
