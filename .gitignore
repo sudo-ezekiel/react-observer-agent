@@ -1,3 +1,8 @@
 node_modules/
 dist/
 *.tsbuildinfo
+
+# Local API keys for the example app. .env.example is the tracked template.
+.env
+.env.local
+.env.*.local

@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_OPENAI_API_KEY: string;
+  /** Which adapter the example uses: "openai" (default) or "claude". */
+  readonly VITE_PROVIDER?: string;
 }
 
 interface ImportMeta {

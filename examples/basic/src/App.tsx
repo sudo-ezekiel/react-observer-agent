@@ -1,12 +1,17 @@
-import { AIAgentProvider, openAIAdapter } from 'react-observer-agent';
+import { AIAgentProvider, claudeAdapter, openAIAdapter } from 'react-observer-agent';
 import { useAppStore } from './store';
 import { tools } from './tools';
 import { ChatPanel } from './ChatPanel';
 
-const model = openAIAdapter({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY as string,
-  model: 'gpt-4o',
-});
+// Set VITE_PROVIDER=claude to run the same example against the Anthropic API.
+const provider = import.meta.env.VITE_PROVIDER === 'claude' ? 'claude' : 'openai';
+
+// Both point at the dev server's /api proxy, which holds the key. See
+// vite.config.ts, and section 3.4 of the spec for the production pattern.
+const model =
+  provider === 'claude'
+    ? claudeAdapter({ baseURL: '/api/anthropic' })
+    : openAIAdapter({ baseURL: '/api/openai' });
 
 // Resolved inside the agent loop, outside React rendering, so this reads the
 // store through its vanilla API rather than calling the hook.
@@ -18,7 +23,8 @@ export default function App() {
       <h1>react-observer-agent — Basic Example</h1>
       <p>
         Current page: <strong>{useAppStore((s) => s.currentPage)}</strong> | Cart
-        items: <strong>{useAppStore((s) => s.cart.length)}</strong>
+        items: <strong>{useAppStore((s) => s.cart.length)}</strong> | Provider:{' '}
+        <strong>{provider}</strong>
       </p>
 
       <AIAgentProvider
