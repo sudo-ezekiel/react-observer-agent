@@ -47,4 +47,33 @@ describe('validateToolNames', () => {
       'Duplicate tool name "b"',
     );
   });
+
+  it('throws when a tool shadows the internal readState tool', () => {
+    const tools = [registerTool('__readState', () => {})];
+
+    expect(() => validateToolNames(tools)).toThrowError(
+      /reserved "__" prefix/,
+    );
+  });
+
+  it('throws on any name using the reserved prefix', () => {
+    const tools = [
+      registerTool('safeTool', () => {}),
+      registerTool('__anything', () => {}),
+    ];
+
+    expect(() => validateToolNames(tools)).toThrowError(
+      /reserved "__" prefix/,
+    );
+  });
+
+  it('allows underscores that are not a leading double underscore', () => {
+    const tools = [
+      registerTool('_private', () => {}),
+      registerTool('my__tool', () => {}),
+      registerTool('snake_case', () => {}),
+    ];
+
+    expect(() => validateToolNames(tools)).not.toThrow();
+  });
 });
