@@ -39,18 +39,27 @@ export interface AgentLoopResult {
   messages: ConversationMessage[];
 }
 
-function abortedResult(
-  toolCalls: ToolCallResult[],
-  messages: ConversationMessage[],
-): AgentLoopResult {
-  return {
-    response: {
-      message: '',
-      toolCalls,
-      error: { message: 'Interaction aborted', code: 'ABORTED' },
-    },
-    messages,
-  };
+/** Accumulates token usage across the turns of one interaction. */
+class UsageTotal {
+  private promptTokens = 0;
+  private completionTokens = 0;
+  private reported = false;
+
+  add(usage?: { promptTokens: number; completionTokens: number }): void {
+    if (!usage) return;
+    this.reported = true;
+    this.promptTokens += usage.promptTokens ?? 0;
+    this.completionTokens += usage.completionTokens ?? 0;
+  }
+
+  /** Undefined when no adapter response carried usage, rather than a false zero. */
+  total(): { promptTokens: number; completionTokens: number } | undefined {
+    if (!this.reported) return undefined;
+    return {
+      promptTokens: this.promptTokens,
+      completionTokens: this.completionTokens,
+    };
+  }
 }
 
 function isAbortError(error: unknown): boolean {
@@ -162,12 +171,23 @@ export async function executeAgentLoop(
     .join('\n\n') || undefined;
 
   const allToolCalls: ToolCallResult[] = [];
+  const usage = new UsageTotal();
   let turns = 0;
   let finalMessage = '';
   let completed = false;
 
+  const abortedResult = (): AgentLoopResult => ({
+    response: {
+      message: '',
+      toolCalls: allToolCalls,
+      error: { message: 'Interaction aborted', code: 'ABORTED' },
+      usage: usage.total(),
+    },
+    messages,
+  });
+
   while (turns < maxTurns) {
-    if (signal?.aborted) return abortedResult(allToolCalls, messages);
+    if (signal?.aborted) return abortedResult();
 
     turns++;
 
@@ -201,12 +221,14 @@ export async function executeAgentLoop(
     } catch (error) {
       // An adapter that forwarded the signal rejects rather than resolving.
       if (isAbortError(error) || signal?.aborted) {
-        return abortedResult(allToolCalls, messages);
+        return abortedResult();
       }
       throw error;
     }
 
-    if (signal?.aborted) return abortedResult(allToolCalls, messages);
+    usage.add(modelResponse.usage);
+
+    if (signal?.aborted) return abortedResult();
 
     if (debug) {
       console.log('[react-observer-agent] LLM response:', {
@@ -231,7 +253,7 @@ export async function executeAgentLoop(
 
     for (const llmCall of modelResponse.toolCalls) {
       // Stop before starting any further side effects.
-      if (signal?.aborted) return abortedResult(allToolCalls, messages);
+      if (signal?.aborted) return abortedResult();
 
       // Handle internal readState tool
       if (llmCall.name === READ_STATE_TOOL_NAME) {
@@ -456,6 +478,7 @@ export async function executeAgentLoop(
           message: `Agent did not produce a final response within ${maxTurns} turns`,
           code: 'MAX_TURNS',
         },
+        usage: usage.total(),
       },
       messages,
     };
@@ -467,6 +490,7 @@ export async function executeAgentLoop(
     response: {
       message: finalMessage,
       toolCalls: allToolCalls,
+      usage: usage.total(),
     },
     messages,
   };

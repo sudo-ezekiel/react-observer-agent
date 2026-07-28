@@ -53,6 +53,8 @@ export interface AgentResponse {
   message: string;
   toolCalls: ToolCallResult[];
   error?: AgentError;
+  /** Totalled across every model call in the interaction, when the adapter reports it. */
+  usage?: { promptTokens: number; completionTokens: number };
 }
 
 // --- Agent Context (useAgent return type) ---

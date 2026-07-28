@@ -558,6 +558,65 @@ describe('executeAgentLoop', () => {
     expect(callArgs.systemPrompt).toContain('__readState');
   });
 
+  describe('usage', () => {
+    it('totals usage across every turn of an interaction', async () => {
+      const adapter = mockAdapter(
+        {
+          content: null,
+          toolCalls: [{ id: 'c1', name: 'addToCart', arguments: { productId: 'a' } }],
+          usage: { promptTokens: 100, completionTokens: 20 },
+        },
+        { content: 'Added.', usage: { promptTokens: 150, completionTokens: 10 } },
+      );
+
+      const result = await runLoop('add it', {
+        model: adapter,
+        state: {},
+        tools: defaultTools(),
+        permissions: defaultPermissions,
+        conversationHistory: [],
+      });
+
+      expect(result.usage).toEqual({ promptTokens: 250, completionTokens: 30 });
+    });
+
+    it('leaves usage undefined when no adapter response reports it', async () => {
+      const adapter = mockAdapter({ content: 'hi' });
+
+      const result = await runLoop('hello', {
+        model: adapter,
+        state: {},
+        tools: defaultTools(),
+        permissions: defaultPermissions,
+        conversationHistory: [],
+      });
+
+      expect(result.usage).toBeUndefined();
+    });
+
+    it('reports usage spent before the turn budget ran out', async () => {
+      const adapter = mockAdapter(
+        ...Array.from({ length: 5 }, () => ({
+          content: null,
+          toolCalls: [{ id: 'c', name: 'addToCart', arguments: { productId: 'x' } }],
+          usage: { promptTokens: 10, completionTokens: 5 },
+        })),
+      );
+
+      const result = await runLoop('keep going', {
+        model: adapter,
+        state: {},
+        tools: defaultTools(),
+        permissions: defaultPermissions,
+        options: { maxTurns: 2 },
+        conversationHistory: [],
+      });
+
+      expect(result.error?.code).toBe('MAX_TURNS');
+      expect(result.usage).toEqual({ promptTokens: 20, completionTokens: 10 });
+    });
+  });
+
   describe('abort', () => {
     it('returns an ABORTED error without calling the adapter when already aborted', async () => {
       const adapter = mockAdapter({ content: 'never reached' });
