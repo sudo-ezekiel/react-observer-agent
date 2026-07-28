@@ -168,3 +168,12 @@ export interface OpenAIAdapterConfig {
   temperature?: number;
   headers?: Record<string, string>;
 }
+
+export interface ClaudeAdapterConfig {
+  apiKey?: string;
+  model?: string;
+  baseURL?: string;
+  /** Required by the Anthropic API. Defaults to 16000. */
+  maxTokens?: number;
+  headers?: Record<string, string>;
+}

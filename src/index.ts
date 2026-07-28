@@ -13,6 +13,7 @@ export { validateToolCall } from './permissions/validateToolCall';
 
 // Adapters
 export { openAIAdapter } from './adapters/openai';
+export { claudeAdapter } from './adapters/claude';
 
 // Types
 export type {
@@ -39,4 +40,5 @@ export type {
   LLMToolDefinition,
   ConversationMessage,
   OpenAIAdapterConfig,
+  ClaudeAdapterConfig,
 } from './types';
