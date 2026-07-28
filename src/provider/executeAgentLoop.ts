@@ -29,11 +29,27 @@ interface ExecutionContext {
   signal?: AbortSignal;
 }
 
-function abortedResponse(toolCalls: ToolCallResult[]): AgentResponse {
+/**
+ * The loop returns the LLM-facing message list alongside the response so the
+ * provider can replay it verbatim on the next interaction. Structured tool
+ * calls survive that way, which plain history text cannot express.
+ */
+export interface AgentLoopResult {
+  response: AgentResponse;
+  messages: ConversationMessage[];
+}
+
+function abortedResult(
+  toolCalls: ToolCallResult[],
+  messages: ConversationMessage[],
+): AgentLoopResult {
   return {
-    message: '',
-    toolCalls,
-    error: { message: 'Interaction aborted', code: 'ABORTED' },
+    response: {
+      message: '',
+      toolCalls,
+      error: { message: 'Interaction aborted', code: 'ABORTED' },
+    },
+    messages,
   };
 }
 
@@ -83,7 +99,7 @@ function buildReadStateToolDef(): LLMToolDefinition {
 export async function executeAgentLoop(
   message: string,
   ctx: ExecutionContext,
-): Promise<AgentResponse> {
+): Promise<AgentLoopResult> {
   const { model, state, tools, permissions, options, signal } = ctx;
   const debug = options?.debug ?? false;
   const maxTurns = options?.maxTurns ?? DEFAULT_MAX_TURNS;
@@ -151,7 +167,7 @@ export async function executeAgentLoop(
   let completed = false;
 
   while (turns < maxTurns) {
-    if (signal?.aborted) return abortedResponse(allToolCalls);
+    if (signal?.aborted) return abortedResult(allToolCalls, messages);
 
     turns++;
 
@@ -161,7 +177,9 @@ export async function executeAgentLoop(
 
     // 4. Send to LLM (state is empty — agent pulls via readState)
     const modelRequest = {
-      messages,
+      // A snapshot, since the loop keeps appending to `messages` after this
+      // call and an adapter that reads it asynchronously would see the churn.
+      messages: [...messages],
       tools: llmTools,
       state: {} as Record<string, unknown>,
       systemPrompt,
@@ -183,12 +201,12 @@ export async function executeAgentLoop(
     } catch (error) {
       // An adapter that forwarded the signal rejects rather than resolving.
       if (isAbortError(error) || signal?.aborted) {
-        return abortedResponse(allToolCalls);
+        return abortedResult(allToolCalls, messages);
       }
       throw error;
     }
 
-    if (signal?.aborted) return abortedResponse(allToolCalls);
+    if (signal?.aborted) return abortedResult(allToolCalls, messages);
 
     if (debug) {
       console.log('[react-observer-agent] LLM response:', {
@@ -213,7 +231,7 @@ export async function executeAgentLoop(
 
     for (const llmCall of modelResponse.toolCalls) {
       // Stop before starting any further side effects.
-      if (signal?.aborted) return abortedResponse(allToolCalls);
+      if (signal?.aborted) return abortedResult(allToolCalls, messages);
 
       // Handle internal readState tool
       if (llmCall.name === READ_STATE_TOOL_NAME) {
@@ -431,17 +449,25 @@ export async function executeAgentLoop(
       console.warn(`[react-observer-agent] Max turns (${maxTurns}) reached`);
     }
     return {
-      message: '',
-      toolCalls: allToolCalls,
-      error: {
-        message: `Agent did not produce a final response within ${maxTurns} turns`,
-        code: 'MAX_TURNS',
+      response: {
+        message: '',
+        toolCalls: allToolCalls,
+        error: {
+          message: `Agent did not produce a final response within ${maxTurns} turns`,
+          code: 'MAX_TURNS',
+        },
       },
+      messages,
     };
   }
 
+  messages.push({ role: 'assistant', content: finalMessage });
+
   return {
-    message: finalMessage,
-    toolCalls: allToolCalls,
+    response: {
+      message: finalMessage,
+      toolCalls: allToolCalls,
+    },
+    messages,
   };
 }

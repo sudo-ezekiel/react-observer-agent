@@ -42,13 +42,15 @@ export function AIAgentProvider({
     validateToolNames(tools);
   }, [tools]);
 
+  // The LLM-facing transcript, kept separately from the user-facing history so
+  // structured tool calls survive across interactions.
+  const transcriptRef = useRef<ConversationMessage[]>([]);
+
   const clearHistory = useCallback(() => {
     setHistory([]);
     setLastResponse(null);
+    transcriptRef.current = [];
   }, []);
-
-  const historyRef = useRef(history);
-  historyRef.current = history;
 
   const send = useCallback(async (
     message: string,
@@ -65,21 +67,22 @@ export function AIAgentProvider({
     setHistory((prev) => [...prev, userEntry]);
 
     try {
-      // Build conversation history for the LLM from current entries
-      const conversationHistory: ConversationMessage[] = historyRef.current.map((entry) => ({
-        role: entry.role,
-        content: entry.content,
-      }));
-
-      const response = await executeAgentLoop(message, {
+      const { response, messages } = await executeAgentLoop(message, {
         model: modelRef.current,
         state: stateRef.current,
         tools: toolsRef.current,
         permissions: permissionsRef.current,
         options: optionsRef.current,
-        conversationHistory,
+        conversationHistory: transcriptRef.current,
         signal: sendOptions?.signal,
       });
+
+      // An abort can land between an assistant message and the tool results
+      // answering it. Providers reject that shape, so the partial turn is
+      // dropped rather than replayed.
+      if (response.error?.code !== 'ABORTED') {
+        transcriptRef.current = messages;
+      }
 
       const assistantEntry: ConversationEntry = {
         role: 'assistant',

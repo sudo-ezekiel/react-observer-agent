@@ -286,6 +286,139 @@ describe('error reporting', () => {
   });
 });
 
+describe('conversation replay', () => {
+  function sentMessages(model: ModelAdapter, callIndex: number) {
+    return (model.sendMessage as ReturnType<typeof vi.fn>).mock.calls[callIndex][0].messages;
+  }
+
+  it('replays prior tool calls and results with their structure intact', async () => {
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 'call_1', name: 'increment', arguments: { by: 1 } }],
+      })
+      .mockResolvedValueOnce({ content: 'Incremented.', toolCalls: [] })
+      .mockResolvedValueOnce({ content: 'Yes, once.', toolCalls: [] });
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await ctx!.send('increment it');
+    });
+    await act(async () => {
+      await ctx!.send('did you increment it?');
+    });
+
+    const replayed = sentMessages(model, 2);
+    const assistantWithCall = replayed.find(
+      (m: { toolCalls?: unknown[] }) => m.toolCalls && m.toolCalls.length > 0,
+    );
+    expect(assistantWithCall.toolCalls[0]).toEqual({
+      id: 'call_1',
+      name: 'increment',
+      arguments: { by: 1 },
+    });
+
+    const toolResult = replayed.find((m: { role: string }) => m.role === 'tool');
+    expect(toolResult.toolCallId).toBe('call_1');
+
+    // The final answer from the first interaction is replayed too.
+    expect(
+      replayed.some((m: { content: string }) => m.content === 'Incremented.'),
+    ).toBe(true);
+    // And the new user message is last.
+    expect(replayed[replayed.length - 1]).toEqual({
+      role: 'user',
+      content: 'did you increment it?',
+    });
+  });
+
+  it('clearHistory resets the replayed transcript', async () => {
+    const model = createMockAdapter({ content: 'ok' });
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await ctx!.send('first');
+    });
+    act(() => {
+      ctx!.clearHistory();
+    });
+    await act(async () => {
+      await ctx!.send('second');
+    });
+
+    expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+  });
+
+  it('drops the partial turn when the adapter throws', async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model, options: { onError: vi.fn() } })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await ctx!.send('first');
+    });
+    await act(async () => {
+      await ctx!.send('second');
+    });
+
+    expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+  });
+
+  it('drops an aborted turn so no unanswered tool call is replayed', async () => {
+    const controller = new AbortController();
+    const sendMessage = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        return {
+          content: '',
+          toolCalls: [{ id: 'call_1', name: 'increment', arguments: {} }],
+        };
+      })
+      .mockResolvedValueOnce({ content: 'ok', toolCalls: [] });
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await ctx!.send('first', { signal: controller.signal });
+    });
+    await act(async () => {
+      await ctx!.send('second');
+    });
+
+    expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+  });
+});
+
 describe('state as function', () => {
   it('accepts a getter function for state', () => {
     let captured: ReturnType<typeof useAgent> | undefined;

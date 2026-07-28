@@ -15,6 +15,15 @@ function mockAdapter(...responses: Partial<ModelResponse>[]): ModelAdapter {
   return { sendMessage: fn };
 }
 
+/** Most tests assert on the response alone, not the replay transcript. */
+async function runLoop(
+  message: string,
+  ctx: Parameters<typeof executeAgentLoop>[1],
+) {
+  const { response } = await executeAgentLoop(message, ctx);
+  return response;
+}
+
 function defaultTools(): ToolDefinition[] {
   return [
     registerTool('addToCart', (args: unknown) => ({ added: args }), {
@@ -38,7 +47,7 @@ describe('executeAgentLoop', () => {
   it('returns text response when LLM responds with text only', async () => {
     const adapter = mockAdapter({ content: 'You have 2 items in your cart.' });
 
-    const result = await executeAgentLoop('What is in my cart?', {
+    const result = await runLoop('What is in my cart?', {
       model: adapter,
       state: { cart: ['item1', 'item2'] },
       tools: defaultTools(),
@@ -61,7 +70,7 @@ describe('executeAgentLoop', () => {
       { content: 'Added to cart!' },
     );
 
-    const result = await executeAgentLoop('Add the sneakers', {
+    const result = await runLoop('Add the sneakers', {
       model: adapter,
       state: { cart: [] },
       tools: defaultTools(),
@@ -92,7 +101,7 @@ describe('executeAgentLoop', () => {
       { content: 'Both added!' },
     );
 
-    const result = await executeAgentLoop('Add both items', {
+    const result = await runLoop('Add both items', {
       model: adapter,
       state: { cart: [] },
       tools: defaultTools(),
@@ -114,7 +123,7 @@ describe('executeAgentLoop', () => {
       })),
     );
 
-    const result = await executeAgentLoop('Keep adding', {
+    const result = await runLoop('Keep adding', {
       model: adapter,
       state: { cart: [] },
       tools: defaultTools(),
@@ -136,7 +145,7 @@ describe('executeAgentLoop', () => {
       })),
     );
 
-    const result = await executeAgentLoop('Keep adding', {
+    const result = await runLoop('Keep adding', {
       model: adapter,
       state: { cart: [] },
       tools: defaultTools(),
@@ -161,7 +170,7 @@ describe('executeAgentLoop', () => {
       { content: 'Added.' },
     );
 
-    const result = await executeAgentLoop('Add it', {
+    const result = await runLoop('Add it', {
       model: adapter,
       state: { cart: [] },
       tools: defaultTools(),
@@ -177,7 +186,7 @@ describe('executeAgentLoop', () => {
   it('treats a deliberately empty final answer as success, not exhaustion', async () => {
     const adapter = mockAdapter({ content: '' });
 
-    const result = await executeAgentLoop('hi', {
+    const result = await runLoop('hi', {
       model: adapter,
       state: {},
       tools: defaultTools(),
@@ -198,7 +207,7 @@ describe('executeAgentLoop', () => {
       { content: 'Sorry, I cannot do that.' },
     );
 
-    const result = await executeAgentLoop('Delete my account', {
+    const result = await runLoop('Delete my account', {
       model: adapter,
       state: { cart: [] },
       tools: defaultTools(),
@@ -222,7 +231,7 @@ describe('executeAgentLoop', () => {
 
     const onConfirm = vi.fn().mockResolvedValue(true);
 
-    const result = await executeAgentLoop('Clear my cart', {
+    const result = await runLoop('Clear my cart', {
       model: adapter,
       state: { cart: ['item'] },
       tools: defaultTools(),
@@ -253,7 +262,7 @@ describe('executeAgentLoop', () => {
 
     const onConfirm = vi.fn().mockResolvedValue(false);
 
-    const result = await executeAgentLoop('Clear my cart', {
+    const result = await runLoop('Clear my cart', {
       model: adapter,
       state: { cart: ['item'] },
       tools: defaultTools(),
@@ -278,7 +287,7 @@ describe('executeAgentLoop', () => {
       { content: 'Cannot clear without confirmation.' },
     );
 
-    const result = await executeAgentLoop('Clear my cart', {
+    const result = await runLoop('Clear my cart', {
       model: adapter,
       state: { cart: ['item'] },
       tools: defaultTools(),
@@ -306,7 +315,7 @@ describe('executeAgentLoop', () => {
       { content: 'Done!' },
     );
 
-    await executeAgentLoop('Add item', {
+    await runLoop('Add item', {
       model: adapter,
       state: { cart: [] },
       tools: defaultTools(),
@@ -338,7 +347,7 @@ describe('executeAgentLoop', () => {
       { content: 'Something went wrong.' },
     );
 
-    const result = await executeAgentLoop('Run failing tool', {
+    const result = await runLoop('Run failing tool', {
       model: adapter,
       state: {},
       tools: [failingTool],
@@ -354,7 +363,7 @@ describe('executeAgentLoop', () => {
   it('sends empty state object to LLM (pull-based)', async () => {
     const adapter = mockAdapter({ content: 'hello' });
 
-    await executeAgentLoop('Hello', {
+    await runLoop('Hello', {
       model: adapter,
       state: { cart: ['item'], secret: 'hidden' },
       tools: defaultTools(),
@@ -369,7 +378,7 @@ describe('executeAgentLoop', () => {
   it('includes systemPrompt in LLM request', async () => {
     const adapter = mockAdapter({ content: 'hello' });
 
-    await executeAgentLoop('Hi', {
+    await runLoop('Hi', {
       model: adapter,
       state: {},
       tools: [],
@@ -385,7 +394,7 @@ describe('executeAgentLoop', () => {
   it('includes stateManifest in LLM request', async () => {
     const adapter = mockAdapter({ content: 'Got it' });
 
-    await executeAgentLoop('Check count', {
+    await runLoop('Check count', {
       model: adapter,
       state: () => ({ count: 42 }),
       tools: [],
@@ -409,7 +418,7 @@ describe('executeAgentLoop', () => {
       { content: 'You have 2 items.' },
     );
 
-    const result = await executeAgentLoop('What is in my cart?', {
+    const result = await runLoop('What is in my cart?', {
       model: adapter,
       state: { cart: ['item1', 'item2'], secret: 'hidden' },
       tools: defaultTools(),
@@ -441,7 +450,7 @@ describe('executeAgentLoop', () => {
       { content: 'Only cart returned.' },
     );
 
-    await executeAgentLoop('Show me everything', {
+    await runLoop('Show me everything', {
       model: adapter,
       state: { cart: ['item'], secret: 'x' },
       tools: defaultTools(),
@@ -474,7 +483,7 @@ describe('executeAgentLoop', () => {
       { content: 'Added to cart!' },
     );
 
-    const result = await executeAgentLoop('Add sneakers', {
+    const result = await runLoop('Add sneakers', {
       model: adapter,
       state: { cart: [] },
       tools: defaultTools(),
@@ -492,7 +501,7 @@ describe('executeAgentLoop', () => {
   it('includes __readState tool in LLM tools when canAccess has keys', async () => {
     const adapter = mockAdapter({ content: 'hello' });
 
-    await executeAgentLoop('Hi', {
+    await runLoop('Hi', {
       model: adapter,
       state: { count: 1 },
       tools: defaultTools(),
@@ -508,7 +517,7 @@ describe('executeAgentLoop', () => {
   it('does not include __readState when canAccess is empty', async () => {
     const adapter = mockAdapter({ content: 'hello' });
 
-    await executeAgentLoop('Hi', {
+    await runLoop('Hi', {
       model: adapter,
       state: {},
       tools: [],
@@ -524,7 +533,7 @@ describe('executeAgentLoop', () => {
   it('uses stateDescriptions in manifest', async () => {
     const adapter = mockAdapter({ content: 'Got it' });
 
-    await executeAgentLoop('Check', {
+    await runLoop('Check', {
       model: adapter,
       state: { user: { name: 'Alice' }, cart: [] },
       tools: [],
@@ -555,7 +564,7 @@ describe('executeAgentLoop', () => {
       const controller = new AbortController();
       controller.abort();
 
-      const result = await executeAgentLoop('hello', {
+      const result = await runLoop('hello', {
         model: adapter,
         state: {},
         tools: defaultTools(),
@@ -573,7 +582,7 @@ describe('executeAgentLoop', () => {
       const adapter = mockAdapter({ content: 'hi' });
       const controller = new AbortController();
 
-      await executeAgentLoop('hello', {
+      await runLoop('hello', {
         model: adapter,
         state: {},
         tools: defaultTools(),
@@ -593,7 +602,7 @@ describe('executeAgentLoop', () => {
         sendMessage: vi.fn().mockRejectedValue(abortError),
       };
 
-      const result = await executeAgentLoop('hello', {
+      const result = await runLoop('hello', {
         model: adapter,
         state: {},
         tools: defaultTools(),
@@ -618,7 +627,7 @@ describe('executeAgentLoop', () => {
         }),
       };
 
-      const result = await executeAgentLoop('add it', {
+      const result = await runLoop('add it', {
         model: adapter,
         state: {},
         tools: [
@@ -642,7 +651,7 @@ describe('executeAgentLoop', () => {
       };
 
       await expect(
-        executeAgentLoop('hello', {
+        runLoop('hello', {
           model: adapter,
           state: {},
           tools: defaultTools(),
@@ -671,7 +680,7 @@ describe('executeAgentLoop', () => {
         { content: 'Sorry, I need a product id.' },
       );
 
-      const result = await executeAgentLoop('add something', {
+      const result = await runLoop('add something', {
         model: adapter,
         state: {},
         tools,
@@ -705,7 +714,7 @@ describe('executeAgentLoop', () => {
         { content: 'Added.' },
       );
 
-      const result = await executeAgentLoop('add something', {
+      const result = await runLoop('add something', {
         model: adapter,
         state: {},
         tools,
@@ -743,7 +752,7 @@ describe('executeAgentLoop', () => {
         { content: 'done' },
       );
 
-      await executeAgentLoop('clear it', {
+      await runLoop('clear it', {
         model: adapter,
         state: {},
         tools,
@@ -766,7 +775,7 @@ describe('executeAgentLoop', () => {
         { content: 'done' },
       );
 
-      const result = await executeAgentLoop('go', {
+      const result = await runLoop('go', {
         model: adapter,
         state: {},
         tools: [registerTool('freeForm', handler, { description: 'Anything goes' })],
@@ -788,7 +797,7 @@ describe('executeAgentLoop', () => {
         }),
       ];
 
-      await executeAgentLoop('clear it', {
+      await runLoop('clear it', {
         model: adapter,
         state: {},
         tools,
@@ -811,7 +820,7 @@ describe('executeAgentLoop', () => {
       const adapter = mockAdapter({ content: 'done' });
       const tools = [registerTool('mysteryTool', () => null)];
 
-      await executeAgentLoop('hello', {
+      await runLoop('hello', {
         model: adapter,
         state: {},
         tools,
@@ -836,7 +845,7 @@ describe('executeAgentLoop', () => {
         { content: 'done' },
       );
 
-      const result = await executeAgentLoop('hello', {
+      const result = await runLoop('hello', {
         model: adapter,
         state: {},
         tools: [registerTool('mysteryTool', handler)],
