@@ -214,6 +214,88 @@ describe('openAIAdapter', () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       expect(body.messages[0].tool_call_id).toBe('call_123');
     });
+
+    it('serializes assistant tool_calls followed by a matching tool result', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      await adapter.sendMessage(
+        createRequest({
+          messages: [
+            { role: 'user', content: 'Add the sneakers', toolCalls: [] },
+            {
+              role: 'assistant',
+              content: 'Adding it now.',
+              toolCalls: [
+                { id: 'call_123', name: 'addToCart', arguments: { productId: 'abc' } },
+              ],
+            },
+            {
+              role: 'tool',
+              content: '{"result":"added"}',
+              toolCallId: 'call_123',
+              toolCalls: [],
+            },
+          ],
+        }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.messages[1]).toEqual({
+        role: 'assistant',
+        content: 'Adding it now.',
+        tool_calls: [
+          {
+            id: 'call_123',
+            type: 'function',
+            function: { name: 'addToCart', arguments: '{"productId":"abc"}' },
+          },
+        ],
+      });
+      expect(body.messages[2].tool_call_id).toBe('call_123');
+    });
+
+    it('sends null content for assistant messages that only carry tool calls', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      await adapter.sendMessage(
+        createRequest({
+          messages: [
+            {
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ id: 'call_1', name: '__readState', arguments: { keys: ['cart'] } }],
+            },
+          ],
+        }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.messages[0].content).toBeNull();
+      expect(body.messages[0].tool_calls[0].function.arguments).toBe('{"keys":["cart"]}');
+    });
+
+    it('omits tool_calls for messages without them', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      await adapter.sendMessage(
+        createRequest({
+          messages: [
+            { role: 'user', content: 'Hello', toolCalls: [] },
+            { role: 'assistant', content: 'Hi there', toolCalls: [] },
+          ],
+        }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.messages[0]).toEqual({ role: 'user', content: 'Hello' });
+      expect(body.messages[1]).toEqual({ role: 'assistant', content: 'Hi there' });
+    });
   });
 
   describe('response parsing', () => {

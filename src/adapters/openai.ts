@@ -1,4 +1,5 @@
 import type {
+  ConversationMessage,
   ModelAdapter,
   ModelRequest,
   ModelResponse,
@@ -99,14 +100,35 @@ export function openAIAdapter(config: OpenAIAdapterConfig): ModelAdapter {
   };
 }
 
-function formatMessage(msg: { role: string; content: string; toolCallId?: string }) {
+function formatMessage(msg: ConversationMessage) {
   const formatted: Record<string, unknown> = {
     role: msg.role,
     content: msg.content,
   };
+
   if (msg.toolCallId) {
     formatted.tool_call_id = msg.toolCallId;
   }
+
+  // OpenAI rejects tool messages that do not follow an assistant message
+  // carrying the matching tool_calls entry.
+  if (msg.toolCalls && msg.toolCalls.length > 0) {
+    formatted.tool_calls = msg.toolCalls.map((tc) => ({
+      id: tc.id,
+      type: 'function' as const,
+      function: {
+        name: tc.name,
+        arguments:
+          typeof tc.arguments === 'string'
+            ? tc.arguments
+            : JSON.stringify(tc.arguments ?? {}),
+      },
+    }));
+    if (msg.content === '') {
+      formatted.content = null;
+    }
+  }
+
   return formatted;
 }
 
