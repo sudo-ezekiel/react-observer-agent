@@ -1,6 +1,7 @@
 import type {
   AgentOptions,
   AgentResponse,
+  AnyToolDefinition,
   ConversationMessage,
   JSONSchema,
   LLMToolDefinition,
@@ -8,7 +9,6 @@ import type {
   PermissionsConfig,
   StateSource,
   ToolCallResult,
-  ToolDefinition,
 } from '../types';
 import { createStateSnapshot } from '../state/createStateSnapshot';
 import { filterTools } from '../permissions/filterTools';
@@ -21,7 +21,7 @@ const EMPTY_OBJECT_SCHEMA: JSONSchema = { type: 'object', properties: {} };
 interface ExecutionContext {
   model: ModelAdapter;
   state: StateSource;
-  tools: ToolDefinition[];
+  tools: AnyToolDefinition[];
   permissions: PermissionsConfig;
   options?: AgentOptions;
   conversationHistory: ConversationMessage[];

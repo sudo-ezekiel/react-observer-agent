@@ -17,6 +17,7 @@ export { openAIAdapter } from './adapters/openai';
 // Types
 export type {
   ToolDefinition,
+  AnyToolDefinition,
   ToolOptions,
   AIAgentProviderProps,
   PermissionsConfig,

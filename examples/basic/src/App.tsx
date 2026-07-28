@@ -8,9 +8,11 @@ const model = openAIAdapter({
   model: 'gpt-4o',
 });
 
-export default function App() {
-  const state = useAppStore;
+// Resolved inside the agent loop, outside React rendering, so this reads the
+// store through its vanilla API rather than calling the hook.
+const getAppState = () => useAppStore.getState();
 
+export default function App() {
   return (
     <div style={{ padding: 24, fontFamily: 'system-ui, sans-serif' }}>
       <h1>react-observer-agent — Basic Example</h1>
@@ -21,7 +23,7 @@ export default function App() {
 
       <AIAgentProvider
         model={model}
-        state={state}
+        state={getAppState}
         tools={tools}
         permissions={{
           canAccess: ['user', 'currentPage', 'cart', 'products'],

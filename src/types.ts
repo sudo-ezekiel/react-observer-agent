@@ -17,6 +17,14 @@ export interface ToolDefinition<TArgs = unknown> {
   confirm: boolean;
 }
 
+/**
+ * A tool definition with its argument type erased. Tools registered with
+ * different argument types can only share one array through this type, since
+ * handler parameters are contravariant.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyToolDefinition = ToolDefinition<any>;
+
 // --- Conversation Types ---
 
 export interface ToolCallResult {
@@ -106,9 +114,12 @@ export interface ModelAdapter {
 
 // --- Provider Props ---
 
-export type StateSource =
-  | Record<string, unknown>
-  | (() => Record<string, unknown>);
+/**
+ * Application state, as an object read on each access or a getter called on
+ * each access. Any object shape is accepted: store interfaces rarely carry the
+ * index signature that `Record<string, unknown>` would demand.
+ */
+export type StateSource = object | (() => object);
 
 export interface PendingToolCall {
   toolName: string;
@@ -135,7 +146,7 @@ export interface AgentOptions {
 export interface AIAgentProviderProps {
   model: ModelAdapter;
   state: StateSource;
-  tools: ToolDefinition[];
+  tools: AnyToolDefinition[];
   permissions: PermissionsConfig;
   options?: AgentOptions;
   children: React.ReactNode;

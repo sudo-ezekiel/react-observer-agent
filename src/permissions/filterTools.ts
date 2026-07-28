@@ -1,9 +1,9 @@
-import type { ToolDefinition } from '../types';
+import type { AnyToolDefinition } from '../types';
 
 export function filterTools(
-  tools: ToolDefinition[],
+  tools: AnyToolDefinition[],
   canExecute: string[],
-): ToolDefinition[] {
+): AnyToolDefinition[] {
   const allowed = new Set(canExecute);
   return tools.filter((tool) => allowed.has(tool.name));
 }

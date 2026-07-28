@@ -1,8 +1,8 @@
-import type { ToolDefinition } from '../types';
+import type { AnyToolDefinition } from '../types';
 
 const RESERVED_PREFIX = '__';
 
-export function validateToolNames(tools: ToolDefinition[]): void {
+export function validateToolNames(tools: AnyToolDefinition[]): void {
   const seen = new Set<string>();
   for (const tool of tools) {
     if (tool.name.startsWith(RESERVED_PREFIX)) {
