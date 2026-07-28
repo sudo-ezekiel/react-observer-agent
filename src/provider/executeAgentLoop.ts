@@ -13,6 +13,7 @@ import type {
 import { createStateSnapshot } from '../state/createStateSnapshot';
 import { filterTools } from '../permissions/filterTools';
 import { validateToolCall } from '../permissions/validateToolCall';
+import { validateArgs } from '../tools/validateArgs';
 
 const DEFAULT_MAX_TURNS = 5;
 const READ_STATE_TOOL_NAME = '__readState';
@@ -249,7 +250,40 @@ export async function executeAgentLoop(
         continue;
       }
 
-      // ii. Confirmation flow
+      // ii. Validate arguments before anything acts on them, so the user is
+      // never asked to confirm a malformed call.
+      if (toolDef.parameters) {
+        const validation = validateArgs(llmCall.arguments, toolDef.parameters);
+        if (!validation.valid) {
+          const errorMessage = `Invalid arguments for tool "${llmCall.name}": ${validation.errors.join('; ')}`;
+
+          if (debug) {
+            console.warn(`[react-observer-agent] ${errorMessage}`);
+          }
+
+          const invalidResult: ToolCallResult = {
+            toolName: llmCall.name,
+            args: llmCall.arguments,
+            result: errorMessage,
+            status: 'error',
+          };
+          allToolCalls.push(invalidResult);
+          options?.onToolCall?.({
+            toolName: llmCall.name,
+            args: llmCall.arguments,
+            result: errorMessage,
+            status: 'error',
+          });
+          messages.push({
+            role: 'tool',
+            content: JSON.stringify({ error: errorMessage }),
+            toolCallId: llmCall.id,
+          });
+          continue;
+        }
+      }
+
+      // iii. Confirmation flow
       if (toolDef.confirm) {
         if (!options?.onConfirm) {
           if (debug) {
@@ -307,7 +341,7 @@ export async function executeAgentLoop(
         }
       }
 
-      // iii. Execute tool
+      // iv. Execute tool
       try {
         const result = await toolDef.handler(llmCall.arguments);
         const status = toolDef.confirm ? 'confirmed' : 'success';

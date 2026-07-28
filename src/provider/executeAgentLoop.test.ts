@@ -549,6 +549,132 @@ describe('executeAgentLoop', () => {
     expect(callArgs.systemPrompt).toContain('__readState');
   });
 
+  describe('argument validation', () => {
+    it('rejects a call with missing required arguments without running the handler', async () => {
+      const handler = vi.fn();
+      const tools = [
+        registerTool('addToCart', handler, {
+          description: 'Add item to cart',
+          parameters: {
+            type: 'object',
+            properties: { productId: { type: 'string' } },
+            required: ['productId'],
+          },
+        }),
+      ];
+      const adapter = mockAdapter(
+        { content: null, toolCalls: [{ id: 'c1', name: 'addToCart', arguments: {} }] },
+        { content: 'Sorry, I need a product id.' },
+      );
+
+      const result = await executeAgentLoop('add something', {
+        model: adapter,
+        state: {},
+        tools,
+        permissions: { canAccess: [], canExecute: ['addToCart'] },
+        conversationHistory: [],
+      });
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(result.toolCalls[0].status).toBe('error');
+      expect(result.toolCalls[0].result).toContain('productId is required');
+    });
+
+    it('feeds the validation error back so the model can retry', async () => {
+      const handler = vi.fn(() => ({ ok: true }));
+      const tools = [
+        registerTool('addToCart', handler, {
+          description: 'Add item to cart',
+          parameters: {
+            type: 'object',
+            properties: { productId: { type: 'string' } },
+            required: ['productId'],
+          },
+        }),
+      ];
+      const adapter = mockAdapter(
+        { content: null, toolCalls: [{ id: 'c1', name: 'addToCart', arguments: {} }] },
+        {
+          content: null,
+          toolCalls: [{ id: 'c2', name: 'addToCart', arguments: { productId: 'p1' } }],
+        },
+        { content: 'Added.' },
+      );
+
+      const result = await executeAgentLoop('add something', {
+        model: adapter,
+        state: {},
+        tools,
+        permissions: { canAccess: [], canExecute: ['addToCart'] },
+        conversationHistory: [],
+      });
+
+      const secondRequest = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1][0];
+      const toolMessage = secondRequest.messages.find(
+        (m: { role: string }) => m.role === 'tool',
+      );
+      expect(JSON.parse(toolMessage.content).error).toContain('productId is required');
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(result.message).toBe('Added.');
+      expect(result.toolCalls.map((c) => c.status)).toEqual(['error', 'success']);
+    });
+
+    it('does not ask for confirmation on an invalid call', async () => {
+      const onConfirm = vi.fn().mockResolvedValue(true);
+      const handler = vi.fn();
+      const tools = [
+        registerTool('clearCart', handler, {
+          description: 'Clear the cart',
+          parameters: {
+            type: 'object',
+            properties: { confirmToken: { type: 'string' } },
+            required: ['confirmToken'],
+          },
+          confirm: true,
+        }),
+      ];
+      const adapter = mockAdapter(
+        { content: null, toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }] },
+        { content: 'done' },
+      );
+
+      await executeAgentLoop('clear it', {
+        model: adapter,
+        state: {},
+        tools,
+        permissions: { canAccess: [], canExecute: ['clearCart'] },
+        options: { onConfirm },
+        conversationHistory: [],
+      });
+
+      expect(onConfirm).not.toHaveBeenCalled();
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('skips validation for tools without a parameters schema', async () => {
+      const handler = vi.fn(() => ({ ok: true }));
+      const adapter = mockAdapter(
+        {
+          content: null,
+          toolCalls: [{ id: 'c1', name: 'freeForm', arguments: { whatever: 1 } }],
+        },
+        { content: 'done' },
+      );
+
+      const result = await executeAgentLoop('go', {
+        model: adapter,
+        state: {},
+        tools: [registerTool('freeForm', handler, { description: 'Anything goes' })],
+        permissions: { canAccess: [], canExecute: ['freeForm'] },
+        conversationHistory: [],
+      });
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(result.toolCalls[0].status).toBe('success');
+    });
+  });
+
   describe('tool visibility', () => {
     it('exposes a described tool without parameters using an empty object schema', async () => {
       const adapter = mockAdapter({ content: 'done' });
