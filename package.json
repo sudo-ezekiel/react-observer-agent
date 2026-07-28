@@ -1,6 +1,6 @@
 {
   "name": "react-observer-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A React library that enables AI agents to observe application state, understand user context, and execute pre-defined actions through a declarative provider pattern.",
   "type": "module",
   "main": "./dist/index.cjs",

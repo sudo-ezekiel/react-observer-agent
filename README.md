@@ -32,6 +32,7 @@ const tools = [
 const model = openAIAdapter({
   baseURL: '/api/agent',  // your backend proxy holds the real API key
 });
+// Or Claude, same interface: claudeAdapter({ baseURL: '/api/agent' })
 
 // 3. Wrap your app with the provider
 export default function App() {
@@ -61,6 +62,7 @@ function ChatPanel() {
   const { send, isProcessing, history } = useAgent();
   // send("What's in my cart?") → agent reads state, responds with text
   // send("Go to settings")     → agent calls goToPage({ path: '/settings' })
+  // send(text, { signal })     → cancels an in-flight interaction
 }
 ```
 
@@ -101,12 +103,13 @@ I'm interested in pushing this further — to see if an AI can:
 
 ## 🛣️ Roadmap (Experimental Goals)
 
-- 🔜 Manual state observation + tool registry + OpenAI support
+- ✅ Manual state observation + tool registry + OpenAI support
+- ✅ Consent model + permission boundaries
+- ✅ In-memory agent "short-term memory"
+- ✅ Developer-friendly logging & test tools
+- ✅ Model adapter layer (OpenAI + Claude; Ollama still to come)
+- 🔜 Streaming responses
 - 🔜 DOM awareness + page context mapping
-- 🔜 Consent model + permission boundaries
-- 🔜 Model adapter layer (Claude, Ollama, etc.)
-- 🔜 In-memory agent "short-term memory"
-- 🔜 Developer-friendly logging & test tools
 
 ---
 

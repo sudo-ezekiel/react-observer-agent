@@ -32,7 +32,10 @@ describe('validateArgs', () => {
     });
 
     it('reports missing arguments against an object schema', () => {
-      const result = validateArgs(undefined, { type: 'object', properties: {} });
+      const result = validateArgs(undefined, {
+        type: 'object',
+        properties: {},
+      });
 
       expect(result.valid).toBe(false);
       expect(result.errors[0]).toContain('got undefined');
@@ -143,7 +146,9 @@ describe('validateArgs', () => {
         { name: 'x' },
         {
           type: 'object',
-          properties: { name: { type: 'string', minLength: 10, pattern: '^\\d+$' } },
+          properties: {
+            name: { type: 'string', minLength: 10, pattern: '^\\d+$' },
+          },
           additionalProperties: false,
           $schema: 'https://json-schema.org/draft/2020-12/schema',
         },

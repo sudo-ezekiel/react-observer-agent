@@ -2,7 +2,7 @@
 
 > Version: 0.2.0
 > Author: Ezekiel
-> Status: Living document. Describes the library as implemented at v0.1.0, plus known divergences and roadmap.
+> Status: Living document. Describes the library as implemented at v0.2.0.
 > Supersedes: 0.1.0-draft (March 29, 2026)
 > Last updated: July 28, 2026
 
@@ -42,7 +42,7 @@
  +-----------------------------------------------------------+
         |
         v
- AgentResponse { message, toolCalls }   (readState calls excluded)
+ AgentResponse { message, toolCalls, usage?, error? }  (readState excluded)
 ```
 
 The defining choice is **pull-based state**. The LLM never receives state values upfront. It receives a manifest (key names and descriptions) in the system prompt and pulls specific values on demand through an internal `__readState` tool. This keeps token usage proportional to what the agent actually needs and keeps unread state out of the request entirely. See section 4.2 and [docs/internals.md](docs/internals.md).
@@ -91,10 +91,10 @@ interface ToolDefinition<TArgs = unknown> {
 **Behavior**
 
 - `name` must be unique across all tools passed to a single provider. Uniqueness is enforced at the provider level, not at registration time, so tools can be composed from independent modules without global coordination. The provider throws on mount when it detects duplicates.
-- Names beginning with `__` are **reserved** for internal tools (`__readState` today). The provider rejects user tools with reserved names. (Not yet enforced in v0.1.0; see section 7.)
+- Names beginning with `__` are **reserved** for internal tools (`__readState` today). The provider rejects user tools with reserved names on mount.
 - `handler` runs when the agent invokes the tool. Its return value is serialized and fed back to the LLM, so return something meaningful (`"Added Headphones to cart"`) rather than `undefined`.
-- **LLM visibility rule:** a tool is only exposed to the model when it has a `description`. When `parameters` is omitted, the provider substitutes the empty object schema `{ "type": "object", "properties": {} }`. (v0.1.0 instead drops tools that lack either field; see section 7.)
-- `parameters` is advisory in v0.1.0: it shapes what the LLM sends, and the library does **not** validate incoming arguments against it before calling `handler`. Handlers must treat `args` as untrusted input. Runtime validation is on the roadmap.
+- **LLM visibility rule:** a tool is only exposed to the model when it has a `description`. When `parameters` is omitted, the provider substitutes the empty object schema `{ "type": "object", "properties": {} }`. A tool hidden for lacking a description is still executable if the model names it, since `canExecute` is the authority.
+- `parameters` is enforced at runtime: arguments are validated against it before the handler runs, and before the confirmation prompt (section 4.4). Validation covers a subset of JSON Schema (`type`, `properties`, `required`, `items`, `enum`) and ignores keywords outside it, so a richer schema validates on the parts the library understands rather than failing outright. Handlers should still treat `args` as untrusted, since unvalidated keywords pass through.
 - `confirm: true` routes execution through the provider's `onConfirm` callback (section 4.4).
 
 ---
@@ -104,14 +104,18 @@ interface ToolDefinition<TArgs = unknown> {
 React context provider that wires state, tools, model, and permissions together.
 
 ```tsx
-type StateSource =
-  | Record<string, unknown>            // Plain object, re-read on each access
-  | (() => Record<string, unknown>);   // Getter, called on each access
+// Any object shape: store interfaces rarely carry the index signature that
+// `Record<string, unknown>` would demand.
+type StateSource = object | (() => object);
+
+// A ToolDefinition with its argument type erased, so tools registered with
+// different argument types can share one array.
+type AnyToolDefinition = ToolDefinition<any>;
 
 interface AIAgentProviderProps {
   model: ModelAdapter;
   state: StateSource;
-  tools: ToolDefinition[];
+  tools: AnyToolDefinition[];
   permissions: PermissionsConfig;
   options?: AgentOptions;
   children: React.ReactNode;
@@ -167,8 +171,12 @@ Hook for interacting with the agent from anywhere inside the provider tree. Thro
 ```ts
 function useAgent(): AgentContext;
 
+interface SendOptions {
+  signal?: AbortSignal; // Cancels the interaction; resolves with an ABORTED error
+}
+
 interface AgentContext {
-  send: (message: string) => Promise<AgentResponse>; // Send a message to the agent
+  send: (message: string, options?: SendOptions) => Promise<AgentResponse>;
   isProcessing: boolean;                             // True while an interaction is in flight
   history: ConversationEntry[];                      // Session conversation history
   clearHistory: () => void;                          // Reset history and lastResponse
@@ -178,7 +186,8 @@ interface AgentContext {
 interface AgentResponse {
   message: string;              // Agent's final text
   toolCalls: ToolCallResult[];  // User tools invoked during this interaction (all statuses)
-  error?: AgentError;           // Present when the interaction failed
+  error?: AgentError;           // Present when the interaction failed or was cancelled
+  usage?: { promptTokens: number; completionTokens: number }; // Totalled across turns
 }
 
 interface ToolCallResult {
@@ -206,7 +215,9 @@ interface AgentError {
 
 - The provider records one `user` entry per `send()` and one `assistant` entry per completed response. Tool activity rides on the assistant entry's `toolCalls`; standalone `tool` entries are reserved for future use.
 - History is scoped to the provider instance. Unmount clears it; `clearHistory()` clears it manually.
-- On each `send()`, prior history is replayed to the LLM as plain `role` + `content` text. Structured tool calls from earlier interactions are not resent, so the model sees what was said, not the mechanics of how.
+- On each `send()`, the prior LLM-facing transcript is replayed verbatim, including assistant tool calls and the tool results answering them, so the agent can reason about what it already did. The provider keeps this transcript separately from the user-facing `history`.
+- An aborted turn is **not** added to the transcript. A cancel can land between an assistant tool call and the result answering it, and providers reject that shape. A turn whose adapter threw is likewise dropped.
+- Replayed `__readState` results hold the values read at the time. The manifest instruction tells the model to re-read when it needs current values; `clearHistory()` drops the transcript entirely.
 - `__readState` activity never appears in `history`, `AgentResponse.toolCalls`, or `onToolCall` (section 4.2).
 
 ---
@@ -226,6 +237,7 @@ interface ModelRequest {
   state: Record<string, unknown>;                        // Deprecated: always {} since the pull refactor
   systemPrompt?: string;                                 // User prompt + generated manifest prompt
   stateManifest?: { key: string; description: string }[]; // Informational; already baked into systemPrompt
+  signal?: AbortSignal;                                  // Forward to the transport so requests cancel
 }
 
 interface ConversationMessage {
@@ -264,13 +276,16 @@ An adapter MUST:
 4. Parse tool-call arguments from the wire format into `LLMToolCall.arguments` (JSON-parse with a raw-string fallback for malformed JSON).
 5. Throw on network failures, non-2xx responses, and malformed payloads. The provider converts throws into `AgentResponse.error` and invokes `onError`.
 6. Treat `state` as dead weight (always `{}`) and `stateManifest` as optional context; the manifest is already injected into `systemPrompt` by the loop.
+7. Forward `signal` to the transport, and rethrow an `AbortError` unchanged rather than rewrapping it as a transport failure. The loop identifies cancellation by that error name.
+
+The loop passes a snapshot of `messages`, so an adapter may hold onto it across awaits without observing later turns.
 
 **Built-in and planned adapters**
 
 | Adapter | Status | Notes |
 |---------|--------|-------|
-| `openAIAdapter` | Shipped (v0.1.0) | Chat completions with function calling; known bug, see section 7 |
-| `claudeAdapter` | Planned | Anthropic Messages API with tool use |
+| `openAIAdapter` | Shipped | Chat completions with function calling |
+| `claudeAdapter` | Shipped (v0.2.0) | Anthropic Messages API with tool use |
 | `ollamaAdapter` | Planned | Local models via Ollama |
 | Custom | Supported | Implement `ModelAdapter` and pass it to the provider |
 
@@ -286,7 +301,21 @@ interface OpenAIAdapterConfig {
 }
 ```
 
-The adapter requires either `apiKey` or `baseURL` and throws at initialization when given neither. When `baseURL` already contains `/chat/completions` it is used as-is; otherwise the path is appended.
+```ts
+function claudeAdapter(config: ClaudeAdapterConfig): ModelAdapter;
+
+interface ClaudeAdapterConfig {
+  apiKey?: string;          // Dev and prototyping only; see security note
+  model?: string;           // Default: 'claude-opus-5'
+  baseURL?: string;         // Proxy endpoint (recommended for production)
+  maxTokens?: number;       // Required by the API; default: 16000
+  headers?: Record<string, string>; // Extra headers, spread last so they win
+}
+```
+
+Both adapters require either `apiKey` or `baseURL` and throw at initialization when given neither. When `baseURL` already contains the endpoint path (`/chat/completions` for OpenAI, `/v1/messages` for Claude) it is used as-is; otherwise the path is appended.
+
+`claudeAdapter` sends `anthropic-version: 2023-06-01` and, when `apiKey` is set, `x-api-key`. It sends no sampling parameters, which current Claude models reject. Calling the Anthropic API directly from a browser additionally requires that provider's CORS opt-in header; pass it through `headers` (the proxy pattern below avoids the question entirely, and is the recommended production path regardless).
 
 > **Security: API key handling.**
 > Passing `apiKey` ships the key to the browser, visible in DevTools and network requests. Acceptable for local development, never for production.
@@ -316,23 +345,29 @@ The adapter requires either `apiKey` or `baseURL` and throws at initialization w
 3. Append __readState to the tool list when the manifest is non-empty
 4. System prompt = options.systemPrompt + generated manifest prompt
 5. Turn loop, at most maxTurns iterations (default 5):
-   a. model.sendMessage({ messages, tools, systemPrompt, stateManifest })
-   b. Text-only response: capture as final message, exit loop
-   c. Tool calls: append the assistant message, then for each call:
+   a. If the signal is aborted, stop and return an ABORTED error
+   b. model.sendMessage({ messages, tools, systemPrompt, stateManifest, signal })
+      An AbortError from the adapter also ends the loop as ABORTED
+   c. Accumulate reported token usage
+   d. Text-only response: capture as final message, exit loop
+   e. Tool calls: append the assistant message, then for each call:
+      - stop first if the signal is aborted, before any further side effect
       - __readState: filter requested keys to canAccess, snapshot state,
         append result as a tool message (internal, not surfaced)
       - name not in canExecute: append error result, status 'denied'
+      - arguments failing the parameters schema: append the validation
+        error, status 'error'; the handler does not run
       - confirm:true: run onConfirm; on deny or missing handler,
         append cancelled result, status 'cancelled'
       - otherwise execute handler; append result,
         status 'success' | 'confirmed' | 'error'
-   d. Next turn with the grown message list
-6. Return AgentResponse { message, toolCalls }
+   f. Next turn with the grown message list
+6. Return the response plus the message list, for replay on the next send
 ```
 
-When `maxTurns` is exhausted while the model is still calling tools, the loop stops and returns an **empty** `message` with whatever `toolCalls` accumulated (plus a debug warning). Surfacing this as a typed error (`code: 'MAX_TURNS'`) is on the roadmap.
+When `maxTurns` is exhausted while the model is still calling tools, the loop returns an empty `message`, whatever `toolCalls` accumulated, and `error.code: 'MAX_TURNS'` (plus a debug warning). A cancelled interaction returns `error.code: 'ABORTED'` the same way. Neither throws.
 
-Exceptions thrown anywhere in the loop (adapter failures included) are caught by the provider, converted to an `AgentResponse` with `error` set, stored in `lastResponse`, and passed to `onError`. `send()` resolves rather than rejects.
+Exceptions thrown anywhere in the loop (adapter failures included) are caught by the provider, converted to an `AgentResponse` with `error` set, stored in `lastResponse`, and passed to `onError`. `send()` resolves rather than rejects. Errors the loop returns rather than throws also reach `onError`, with one exception: `ABORTED` does not, since a cancel is a caller decision rather than an application failure.
 
 ### 4.2 Pull-based state and `__readState`
 
@@ -371,6 +406,8 @@ Permissions are enforced at two layers:
 
 ### 4.4 Confirmation flow
 
+Argument validation runs first, so a malformed call is rejected before anyone is asked to approve it.
+
 For a tool registered with `confirm: true`:
 
 - With an `onConfirm` handler: the loop awaits `onConfirm({ toolName, args, description })`. Resolving `true` executes the handler (final status `'confirmed'`); resolving `false` skips it (status `'cancelled'`, the LLM is told the user denied it).
@@ -386,7 +423,7 @@ The consumer owns the UI: modal, toast, inline card, `window.confirm`, anything 
 | `confirmed` | `confirm: true` tool approved and executed | `{ result }` |
 | `cancelled` | `confirm: true` tool denied, or no `onConfirm` handler | `{ status: 'cancelled', reason }` |
 | `denied` | Name failed the `canExecute` check | `{ error }` |
-| `error` | Handler threw | `{ error }` |
+| `error` | Handler threw, or arguments failed the `parameters` schema | `{ error }` |
 
 `onToolCall` fires for every user-tool outcome above. It does not fire for `__readState`, nor for the edge case where a name passes `canExecute` but no matching tool definition exists (that call is recorded as `'denied'` in `toolCalls` only).
 
@@ -442,7 +479,7 @@ export const tools = [
     return 'Cart cleared';
   }, {
     description: 'Remove all items from the cart',
-    parameters: { type: 'object', properties: {} }, // explicit until v0.1.0 defaults this
+    // parameters may be omitted; the empty object schema is substituted
     confirm: true,
   }),
 ];
@@ -463,6 +500,12 @@ const model = openAIAdapter({
   baseURL: '/api/agent',
   headers: { Authorization: `Bearer ${getSessionToken()}` },
 });
+
+// Or, against Claude. The provider is adapter-agnostic, so nothing else changes:
+// const model = claudeAdapter({
+//   baseURL: '/api/agent',
+//   headers: { Authorization: `Bearer ${getSessionToken()}` },
+// });
 
 export default function App() {
   return (
@@ -577,16 +620,17 @@ export { filterState } from './permissions/filterState';
 export { filterTools } from './permissions/filterTools';
 export { validateToolCall } from './permissions/validateToolCall';
 export { openAIAdapter } from './adapters/openai';
+export { claudeAdapter } from './adapters/claude';
 
 // Types
 export type {
-  ToolDefinition, ToolOptions,
+  ToolDefinition, AnyToolDefinition, ToolOptions,
   AIAgentProviderProps, PermissionsConfig, AgentOptions,
   AgentContext, AgentResponse, ToolCallResult, ConversationEntry,
   ModelAdapter, ModelRequest, ModelResponse,
-  StateSource, PendingToolCall, ToolCallEvent, AgentError,
+  StateSource, PendingToolCall, ToolCallEvent, AgentError, SendOptions,
   JSONSchema, LLMToolCall, LLMToolDefinition, ConversationMessage,
-  OpenAIAdapterConfig,
+  OpenAIAdapterConfig, ClaudeAdapterConfig,
 } from './types';
 ```
 
@@ -594,36 +638,25 @@ export type {
 
 ---
 
-## 7. Known divergences (spec vs. v0.1.0 code)
+## 7. Known divergences (spec vs. code)
 
-This spec is normative. Where the shipped code differs, the difference is listed here until fixed.
-
-| # | Area | Spec says | v0.1.0 does | Severity |
-|---|------|-----------|-------------|----------|
-| 1 | Adapter serialization | Assistant messages carrying `toolCalls` must be serialized with the provider-native tool-call structure (section 3.4, rule 2) | `openAIAdapter` drops `toolCalls` when formatting assistant messages, so OpenAI rejects any request containing tool results with a 400. Since the pull refactor made every state read a tool round trip, this breaks most real interactions | Critical |
-| 2 | Tool visibility | `description` required for LLM exposure; missing `parameters` defaults to an empty object schema | Tools missing either `description` or `parameters` are silently excluded from the LLM tool list, with no warning | High |
-| 3 | Reserved names | Provider rejects user tools whose names start with `__` | No guard. A user tool named `__readState` is shadowed by the internal tool and its handler is unreachable | Low |
-| 4 | Example app | State getters must be safe to call outside render (section 3.2) | `examples/basic` passes the Zustand hook itself (`state={useAppStore}`); resolving state calls the hook outside a component and throws | Medium (example only) |
+None. The four divergences recorded against v0.1.0 (adapter tool-call serialization, tool visibility defaults, the reserved `__` prefix, and the example app's state source) were all fixed in v0.2.0; see [CHANGELOG.md](CHANGELOG.md). This section stays as the place to record future gaps between this spec and shipped behavior.
 
 ---
 
 ## 8. Implementation status and roadmap
 
-### Done (v0.1.0)
+### Done (v0.2.0)
 
-All eight phases of the original spec shipped: scaffolding (tsup, ESLint, Prettier, Vitest), tool registry, state observer, provider and `useAgent` hook, permission system, OpenAI adapter, agent execution loop, debug logging plus the Vite example app. The post-phase refactor replaced push-based state snapshots with the manifest + `__readState` pull model described in section 4.2.
+Everything in sections 3 and 4 is implemented and covered by tests: the tool registry with reserved-prefix and uniqueness validation, pull-based state via the manifest and `__readState`, the two-layer permission model, runtime argument validation, the confirmation flow, abort support, structured conversation replay, usage aggregation, and both the OpenAI and Claude adapters.
 
-### Next (v0.2 candidates, rough priority order)
+### Next (v0.3 candidates, rough priority order)
 
-1. Fix divergences 1 and 2 from section 7 (adapter serialization, tool visibility defaults).
-2. `claudeAdapter` for the Anthropic Messages API.
-3. Typed `maxTurns` exhaustion error (`AgentError.code: 'MAX_TURNS'`) instead of an empty message.
-4. Runtime argument validation against `parameters` before invoking handlers.
-5. Abort support: `send(message, { signal })` to cancel in-flight interactions.
-6. Reserved-name validation (`__` prefix) at provider mount.
-7. Structured history replay so prior tool calls survive across `send()` calls.
-8. Streaming responses.
-9. Surface `usage` totals per interaction for consumer-side cost tracking.
+1. `ollamaAdapter` for local models.
+2. Streaming responses, which need a `ModelAdapter` extension and an incremental `useAgent` surface.
+3. Deeper argument validation (`additionalProperties`, numeric and length constraints, `$ref`), or an opt-in hook for a real JSON Schema validator without taking on the dependency by default.
+4. Transcript compaction, so long sessions stay under the model's context window instead of growing unbounded until `clearHistory()`.
+5. Per-tool permission scoping beyond the flat `canExecute` list.
 
 ### Non-goals (for now)
 
@@ -631,7 +664,6 @@ All eight phases of the original spec shipped: scaffolding (tsup, ESLint, Pretti
 - **Automatic state detection**: too much magic; the explicit `state` prop is sufficient.
 - **Multi-agent orchestration**: out of scope.
 - **Persistent memory**: session memory only, no storage integration.
-- **Token budget and cost tracking**: `maxTurns` bounds the loop; `usage` gives consumers the raw numbers.
 - **Built-in rate limiting**: the backend proxy pattern (section 3.4) handles this server-side, where it is reliable.
 
 ---
@@ -650,3 +682,6 @@ All eight phases of the original spec shipped: scaffolding (tsup, ESLint, Pretti
 | Permissions | Whitelist-only | Deny unless explicitly allowed |
 | LLM communication | Adapter pattern | Decouples the core from any specific provider |
 | Reserved tool namespace | `__` prefix | Internal tools can be added without colliding with user tools |
+| Argument validation | Hand-written JSON Schema subset | Keeps the package dependency free; unknown keywords pass through rather than failing |
+| Cancellation | `AbortSignal` on `send()` | Standard platform primitive, forwards straight to `fetch` |
+| History replay | Full LLM transcript | Structured tool calls cannot survive a text-only replay |

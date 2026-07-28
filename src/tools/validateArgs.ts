@@ -11,7 +11,10 @@ export interface ValidationResult {
  * is ignored rather than rejected, so a richer real-world schema still
  * validates on the parts this understands instead of failing outright.
  */
-export function validateArgs(args: unknown, schema: JSONSchema): ValidationResult {
+export function validateArgs(
+  args: unknown,
+  schema: JSONSchema,
+): ValidationResult {
   const errors: string[] = [];
   validateValue(args, schema, '', errors);
   return { valid: errors.length === 0, errors };
@@ -36,7 +39,12 @@ function matchesType(value: unknown, expected: string): boolean {
 
 function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') {
+  if (
+    a === null ||
+    b === null ||
+    typeof a !== 'object' ||
+    typeof b !== 'object'
+  ) {
     return false;
   }
   return JSON.stringify(a) === JSON.stringify(b);
@@ -63,7 +71,10 @@ function validateValue(
     return;
   }
 
-  if (Array.isArray(schema.enum) && !schema.enum.some((option) => sameValue(option, value))) {
+  if (
+    Array.isArray(schema.enum) &&
+    !schema.enum.some((option) => sameValue(option, value))
+  ) {
     errors.push(
       `${label(path)} should be one of ${JSON.stringify(schema.enum)}, got ${JSON.stringify(value)}`,
     );

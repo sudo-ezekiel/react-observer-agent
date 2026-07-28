@@ -111,18 +111,23 @@ The agent execution loop (`executeAgentLoop`) handles the full lifecycle of a `s
 
 ```
 1. Build state manifest from canAccess + stateDescriptions
-2. Filter tools by canExecute
+2. Filter tools by canExecute (a tool needs a description to be visible;
+   a missing parameters schema defaults to the empty object schema)
 3. Inject __readState tool (if canAccess has keys)
 4. Build system prompt = user systemPrompt + state manifest prompt
 5. Enter turn loop (max: maxTurns, default: 5):
-   a. Send messages + tools to LLM via model adapter
-   b. If text-only response → break with final message
-   c. If tool calls:
-      - __readState → resolve requested keys, push result to messages (internal)
-      - User tools → validate permissions → confirmation flow → execute → push result
-   d. Loop back to (a) with updated messages
-6. Return AgentResponse { message, toolCalls }
+   a. Abort check, then send messages + tools to LLM via model adapter
+   b. Accumulate reported token usage
+   c. If text-only response, break with final message
+   d. If tool calls:
+      - __readState: resolve requested keys, push result to messages (internal)
+      - User tools: check canExecute, validate arguments, confirmation flow,
+        execute, push result
+   e. Loop back to (a) with updated messages
+6. Return { response, messages }: the AgentResponse plus the LLM transcript
 ```
+
+Exhausting the loop without a text answer returns `error.code: 'MAX_TURNS'`; an abort returns `'ABORTED'`. Neither throws. Adapter exceptions propagate to the provider, which converts them to an error response.
 
 ### Tool Call Statuses
 
@@ -132,7 +137,7 @@ The agent execution loop (`executeAgentLoop`) handles the full lifecycle of a `s
 | `confirmed` | Tool with `confirm: true` was approved and executed |
 | `cancelled` | Tool with `confirm: true` was denied or no `onConfirm` handler |
 | `denied` | Tool name not in `canExecute` (defense-in-depth) |
-| `error` | Tool handler threw an exception |
+| `error` | Tool handler threw, or arguments failed the `parameters` schema |
 
 ### Debug Logging
 
@@ -145,5 +150,30 @@ When `options.debug` is `true`, the execution loop logs:
 - LLM response summary (truncated content, tool call names)
 - `readState` requested vs allowed keys and results
 - Tool execution results
+- Tools hidden from the LLM for lacking a description
+- Argument validation failures
 
 All logs are prefixed with `[react-observer-agent]`.
+
+---
+
+## Structured Replay
+
+The provider keeps two records of a conversation, and they are not the same thing:
+
+- **`history`** (`ConversationEntry[]`) is the user-facing record, exposed through `useAgent()`. One entry per user message and one per assistant response, with tool activity attached to the assistant entry.
+- **The transcript** (`ConversationMessage[]`) is the LLM-facing record, held in a ref and never exposed. It carries assistant messages with their `toolCalls` intact and the tool result messages answering them.
+
+`executeAgentLoop` returns the transcript alongside the response, and the provider replays it verbatim on the next `send()`. Before this, history was flattened to role and content text, which cannot express a tool call, so the agent lost track of what it had already done between interactions.
+
+Two turns are deliberately **not** persisted to the transcript:
+
+- **Aborted turns.** A cancel can land after the assistant message announcing tool calls but before the results answering them. Both OpenAI and Anthropic reject that shape, so replaying it would break the next request outright. The partial turn is dropped.
+- **Turns whose adapter threw.** Nothing coherent happened, so there is nothing worth replaying.
+
+Two consequences worth knowing:
+
+- **Replayed `__readState` results are point-in-time.** They hold the values read when the tool ran, not current values. The manifest instruction tells the model to read again when it needs fresh state.
+- **The transcript grows.** `maxTurns` bounds growth within one interaction, but nothing bounds it across interactions. `clearHistory()` resets both records. Compaction is on the roadmap.
+
+Adapters receive a snapshot of the message list rather than the live array, so holding onto it across awaits never exposes later turns.

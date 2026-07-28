@@ -127,7 +127,9 @@ export function claudeAdapter(config: ClaudeAdapterConfig): ModelAdapter {
  * their results as `tool_result` blocks on a following user message, so a run of
  * internal tool messages collapses into one user message.
  */
-function toAnthropicMessages(messages: ConversationMessage[]): AnthropicMessage[] {
+function toAnthropicMessages(
+  messages: ConversationMessage[],
+): AnthropicMessage[] {
   const result: AnthropicMessage[] = [];
   let pendingToolResults: ToolResultBlock[] = [];
 
@@ -150,7 +152,11 @@ function toAnthropicMessages(messages: ConversationMessage[]): AnthropicMessage[
 
     flushToolResults();
 
-    if (message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0) {
+    if (
+      message.role === 'assistant' &&
+      message.toolCalls &&
+      message.toolCalls.length > 0
+    ) {
       const blocks: ContentBlock[] = [];
       if (message.content) {
         blocks.push({ type: 'text', text: message.content });
@@ -191,7 +197,11 @@ function parseResponse(data: unknown): ModelResponse {
       textParts.push(block.text);
     } else if (block?.type === 'tool_use') {
       // Already parsed by the API, unlike OpenAI's JSON-string arguments.
-      toolCalls.push({ id: block.id, name: block.name, arguments: block.input });
+      toolCalls.push({
+        id: block.id,
+        name: block.name,
+        arguments: block.input,
+      });
     }
     // Other block types (thinking, for example) carry nothing this loop needs.
   }

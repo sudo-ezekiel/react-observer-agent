@@ -28,7 +28,12 @@ const textResponse = {
 
 const toolUseResponse = {
   content: [
-    { type: 'tool_use', id: 'toolu_123', name: 'addToCart', input: { productId: 'abc' } },
+    {
+      type: 'tool_use',
+      id: 'toolu_123',
+      name: 'addToCart',
+      input: { productId: 'abc' },
+    },
   ],
 };
 
@@ -45,11 +50,15 @@ describe('claudeAdapter', () => {
 
   describe('initialization', () => {
     it('throws when neither apiKey nor baseURL is provided', () => {
-      expect(() => claudeAdapter({})).toThrow(/requires either "apiKey" or "baseURL"/);
+      expect(() => claudeAdapter({})).toThrow(
+        /requires either "apiKey" or "baseURL"/,
+      );
     });
 
     it('creates adapter with apiKey only', () => {
-      expect(typeof claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage).toBe('function');
+      expect(typeof claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage).toBe(
+        'function',
+      );
     });
 
     it('creates adapter with baseURL only', () => {
@@ -62,7 +71,9 @@ describe('claudeAdapter', () => {
       const fetchMock = mockFetch(textResponse);
       globalThis.fetch = fetchMock;
 
-      await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(createRequest());
+      await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(
+        createRequest(),
+      );
 
       const [url, options] = fetchMock.mock.calls[0];
       expect(url).toBe('https://api.anthropic.com/v1/messages');
@@ -84,7 +95,9 @@ describe('claudeAdapter', () => {
       const fetchMock = mockFetch(textResponse);
       globalThis.fetch = fetchMock;
 
-      await claudeAdapter({ baseURL: '/api/agent' }).sendMessage(createRequest());
+      await claudeAdapter({ baseURL: '/api/agent' }).sendMessage(
+        createRequest(),
+      );
 
       expect(fetchMock.mock.calls[0][0]).toBe('/api/agent/v1/messages');
       expect(fetchMock.mock.calls[0][1].headers['x-api-key']).toBeUndefined();
@@ -96,7 +109,10 @@ describe('claudeAdapter', () => {
 
       await claudeAdapter({
         baseURL: '/api/agent',
-        headers: { Authorization: 'Bearer session', 'anthropic-version': '2024-01-01' },
+        headers: {
+          Authorization: 'Bearer session',
+          'anthropic-version': '2024-01-01',
+        },
       }).sendMessage(createRequest());
 
       const headers = fetchMock.mock.calls[0][1].headers;
@@ -142,7 +158,10 @@ describe('claudeAdapter', () => {
             {
               name: 'addToCart',
               description: 'Add item to cart',
-              parameters: { type: 'object', properties: { productId: { type: 'string' } } },
+              parameters: {
+                type: 'object',
+                properties: { productId: { type: 'string' } },
+              },
             },
           ],
         }),
@@ -153,7 +172,10 @@ describe('claudeAdapter', () => {
         {
           name: 'addToCart',
           description: 'Add item to cart',
-          input_schema: { type: 'object', properties: { productId: { type: 'string' } } },
+          input_schema: {
+            type: 'object',
+            properties: { productId: { type: 'string' } },
+          },
         },
       ]);
     });
@@ -184,10 +206,19 @@ describe('claudeAdapter', () => {
               role: 'assistant',
               content: 'Adding it now.',
               toolCalls: [
-                { id: 'toolu_1', name: 'addToCart', arguments: { productId: 'abc' } },
+                {
+                  id: 'toolu_1',
+                  name: 'addToCart',
+                  arguments: { productId: 'abc' },
+                },
               ],
             },
-            { role: 'tool', content: '{"ok":true}', toolCallId: 'toolu_1', toolCalls: [] },
+            {
+              role: 'tool',
+              content: '{"ok":true}',
+              toolCallId: 'toolu_1',
+              toolCalls: [],
+            },
           ],
         }),
       );
@@ -197,12 +228,23 @@ describe('claudeAdapter', () => {
         role: 'assistant',
         content: [
           { type: 'text', text: 'Adding it now.' },
-          { type: 'tool_use', id: 'toolu_1', name: 'addToCart', input: { productId: 'abc' } },
+          {
+            type: 'tool_use',
+            id: 'toolu_1',
+            name: 'addToCart',
+            input: { productId: 'abc' },
+          },
         ],
       });
       expect(body.messages[2]).toEqual({
         role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '{"ok":true}' }],
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_1',
+            content: '{"ok":true}',
+          },
+        ],
       });
     });
 
@@ -216,7 +258,13 @@ describe('claudeAdapter', () => {
             {
               role: 'assistant',
               content: '',
-              toolCalls: [{ id: 'toolu_1', name: '__readState', arguments: { keys: ['cart'] } }],
+              toolCalls: [
+                {
+                  id: 'toolu_1',
+                  name: '__readState',
+                  arguments: { keys: ['cart'] },
+                },
+              ],
             },
           ],
         }),
@@ -224,7 +272,12 @@ describe('claudeAdapter', () => {
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       expect(body.messages[0].content).toEqual([
-        { type: 'tool_use', id: 'toolu_1', name: '__readState', input: { keys: ['cart'] } },
+        {
+          type: 'tool_use',
+          id: 'toolu_1',
+          name: '__readState',
+          input: { keys: ['cart'] },
+        },
       ]);
     });
 
@@ -285,7 +338,9 @@ describe('claudeAdapter', () => {
     it('parses a text response and usage', async () => {
       globalThis.fetch = mockFetch(textResponse);
 
-      const response = await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(createRequest());
+      const response = await claudeAdapter({
+        apiKey: 'sk-ant-test',
+      }).sendMessage(createRequest());
 
       expect(response.content).toBe('Hello! How can I help?');
       expect(response.toolCalls).toBeUndefined();
@@ -295,7 +350,9 @@ describe('claudeAdapter', () => {
     it('parses a tool_use response with already-parsed arguments', async () => {
       globalThis.fetch = mockFetch(toolUseResponse);
 
-      const response = await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(createRequest());
+      const response = await claudeAdapter({
+        apiKey: 'sk-ant-test',
+      }).sendMessage(createRequest());
 
       expect(response.content).toBeNull();
       expect(response.toolCalls).toEqual([
@@ -312,7 +369,9 @@ describe('claudeAdapter', () => {
         ],
       });
 
-      const response = await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(createRequest());
+      const response = await claudeAdapter({
+        apiKey: 'sk-ant-test',
+      }).sendMessage(createRequest());
 
       expect(response.content).toBe('Part one. Part two.');
     });
@@ -325,7 +384,9 @@ describe('claudeAdapter', () => {
         ],
       });
 
-      const response = await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(createRequest());
+      const response = await claudeAdapter({
+        apiKey: 'sk-ant-test',
+      }).sendMessage(createRequest());
 
       expect(response.content).toBe('Let me check.');
       expect(response.toolCalls).toHaveLength(1);
@@ -334,7 +395,9 @@ describe('claudeAdapter', () => {
     it('handles a response without usage', async () => {
       globalThis.fetch = mockFetch({ content: [{ type: 'text', text: 'hi' }] });
 
-      const response = await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(createRequest());
+      const response = await claudeAdapter({
+        apiKey: 'sk-ant-test',
+      }).sendMessage(createRequest());
 
       expect(response.usage).toBeUndefined();
     });
@@ -342,7 +405,9 @@ describe('claudeAdapter', () => {
 
   describe('error handling', () => {
     it('throws on network error', async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error('Connection refused'));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error('Connection refused'));
 
       await expect(
         claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(createRequest()),

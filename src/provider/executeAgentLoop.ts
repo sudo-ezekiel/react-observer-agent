@@ -364,7 +364,7 @@ export async function executeAgentLoop(
           const cancelledResult: ToolCallResult = {
             toolName: llmCall.name,
             args: llmCall.arguments,
-            result: 'Tool execution cancelled — no confirmation handler provided',
+            result: 'Tool execution cancelled: no confirmation handler provided',
             status: 'cancelled',
           };
           allToolCalls.push(cancelledResult);
