@@ -487,4 +487,74 @@ describe('executeAgentLoop', () => {
     expect(callArgs.systemPrompt).toContain('Current logged-in user profile');
     expect(callArgs.systemPrompt).toContain('__readState');
   });
+
+  describe('tool visibility', () => {
+    it('exposes a described tool without parameters using an empty object schema', async () => {
+      const adapter = mockAdapter({ content: 'done' });
+      const tools = [
+        registerTool('clearCart', () => ({ cleared: true }), {
+          description: 'Remove all items from the cart',
+        }),
+      ];
+
+      await executeAgentLoop('clear it', {
+        model: adapter,
+        state: {},
+        tools,
+        permissions: { canAccess: [], canExecute: ['clearCart'] },
+        conversationHistory: [],
+      });
+
+      const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArgs.tools).toEqual([
+        {
+          name: 'clearCart',
+          description: 'Remove all items from the cart',
+          parameters: { type: 'object', properties: {} },
+        },
+      ]);
+    });
+
+    it('hides tools without a description and warns in debug mode', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const adapter = mockAdapter({ content: 'done' });
+      const tools = [registerTool('mysteryTool', () => null)];
+
+      await executeAgentLoop('hello', {
+        model: adapter,
+        state: {},
+        tools,
+        permissions: { canAccess: [], canExecute: ['mysteryTool'] },
+        options: { debug: true },
+        conversationHistory: [],
+      });
+
+      const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(callArgs.tools).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('has no description and is hidden'),
+      );
+
+      warnSpy.mockRestore();
+    });
+
+    it('still executes a hidden tool when the LLM names it', async () => {
+      const handler = vi.fn(() => ({ ok: true }));
+      const adapter = mockAdapter(
+        { content: null, toolCalls: [{ id: 'c1', name: 'mysteryTool', arguments: {} }] },
+        { content: 'done' },
+      );
+
+      const result = await executeAgentLoop('hello', {
+        model: adapter,
+        state: {},
+        tools: [registerTool('mysteryTool', handler)],
+        permissions: { canAccess: [], canExecute: ['mysteryTool'] },
+        conversationHistory: [],
+      });
+
+      expect(handler).toHaveBeenCalledOnce();
+      expect(result.toolCalls[0].status).toBe('success');
+    });
+  });
 });

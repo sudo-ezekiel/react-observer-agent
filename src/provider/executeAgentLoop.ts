@@ -2,6 +2,7 @@ import type {
   AgentOptions,
   AgentResponse,
   ConversationMessage,
+  JSONSchema,
   LLMToolDefinition,
   ModelAdapter,
   PermissionsConfig,
@@ -15,6 +16,7 @@ import { validateToolCall } from '../permissions/validateToolCall';
 
 const DEFAULT_MAX_TURNS = 5;
 const READ_STATE_TOOL_NAME = '__readState';
+const EMPTY_OBJECT_SCHEMA: JSONSchema = { type: 'object', properties: {} };
 
 interface ExecutionContext {
   model: ModelAdapter;
@@ -84,13 +86,26 @@ export async function executeAgentLoop(
 
   // 2. Filter tools by canExecute
   const allowedTools = filterTools(tools, permissions.canExecute);
-  const llmTools: LLMToolDefinition[] = allowedTools
-    .filter((t) => t.description && t.parameters)
-    .map((t) => ({
-      name: t.name,
-      description: t.description!,
-      parameters: t.parameters!,
-    }));
+  const llmTools: LLMToolDefinition[] = [];
+
+  for (const tool of allowedTools) {
+    // A tool without a description gives the LLM nothing to decide on, so it
+    // stays hidden. It remains executable if the model names it anyway.
+    if (!tool.description) {
+      if (debug) {
+        console.warn(
+          `[react-observer-agent] Tool "${tool.name}" has no description and is hidden from the LLM.`,
+        );
+      }
+      continue;
+    }
+
+    llmTools.push({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters ?? EMPTY_OBJECT_SCHEMA,
+    });
+  }
 
   // Add internal readState tool if there are accessible state keys
   if (stateManifest.length > 0) {
