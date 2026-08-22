@@ -113,7 +113,7 @@ export async function executeAgentLoop(
   const debug = options?.debug ?? false;
   const maxTurns = options?.maxTurns ?? DEFAULT_MAX_TURNS;
 
-  // 1. Build state manifest (key names + descriptions, no values)
+  // Key names and descriptions only. Values stay behind __readState.
   const stateManifest = buildStateManifest(
     permissions.canAccess,
     permissions.stateDescriptions,
@@ -123,7 +123,6 @@ export async function executeAgentLoop(
     console.log('[react-observer-agent] State manifest:', stateManifest.map((m) => m.key));
   }
 
-  // 2. Filter tools by canExecute
   const allowedTools = filterTools(tools, permissions.canExecute);
   const llmTools: LLMToolDefinition[] = [];
 
@@ -146,7 +145,6 @@ export async function executeAgentLoop(
     });
   }
 
-  // Add internal readState tool if there are accessible state keys
   if (stateManifest.length > 0) {
     llmTools.push(buildReadStateToolDef());
   }
@@ -155,16 +153,13 @@ export async function executeAgentLoop(
     console.log('[react-observer-agent] Available tools:', llmTools.map((t) => t.name));
   }
 
-  // Build tool lookup
   const toolMap = new Map(allowedTools.map((t) => [t.name, t]));
 
-  // 3. Build conversation messages
   const messages: ConversationMessage[] = [
     ...ctx.conversationHistory,
     { role: 'user', content: message },
   ];
 
-  // Build system prompt with state manifest
   const manifestPrompt = buildStateManifestPrompt(stateManifest);
   const systemPrompt = [options?.systemPrompt, manifestPrompt]
     .filter(Boolean)
@@ -195,7 +190,7 @@ export async function executeAgentLoop(
       console.log(`[react-observer-agent] Turn ${turns}/${maxTurns}`);
     }
 
-    // 4. Send to LLM (state is empty — agent pulls via readState)
+    // `state` stays empty: the model pulls what it needs through __readState.
     const modelRequest = {
       // A snapshot, since the loop keeps appending to `messages` after this
       // call and an adapter that reads it asynchronously would see the churn.
@@ -237,14 +232,13 @@ export async function executeAgentLoop(
       });
     }
 
-    // 5a. Text-only response
+    // Nothing left to run, so this is the answer.
     if (!modelResponse.toolCalls || modelResponse.toolCalls.length === 0) {
       finalMessage = modelResponse.content ?? '';
       completed = true;
       break;
     }
 
-    // 5b. Has tool calls — process them
     messages.push({
       role: 'assistant',
       content: modelResponse.content ?? '',
@@ -255,12 +249,10 @@ export async function executeAgentLoop(
       // Stop before starting any further side effects.
       if (signal?.aborted) return abortedResult();
 
-      // Handle internal readState tool
       if (llmCall.name === READ_STATE_TOOL_NAME) {
         const args = llmCall.arguments as { keys?: string[] };
         const requestedKeys = args?.keys ?? [];
 
-        // Filter to only keys in canAccess
         const allowedKeys = requestedKeys.filter((k) => permissions.canAccess.includes(k));
         const snapshot = createStateSnapshot(state, allowedKeys, debug);
 
@@ -275,11 +267,12 @@ export async function executeAgentLoop(
           content: JSON.stringify(snapshot),
           toolCallId: llmCall.id,
         });
-        // readState is internal — NOT added to allToolCalls or onToolCall
+        // Internal, so it never reaches allToolCalls or onToolCall.
         continue;
       }
 
-      // i. Validate against canExecute (defense-in-depth)
+      // Re-checked after the model answered, so a hallucinated or injected
+      // name is rejected even though it was never advertised.
       if (!validateToolCall(llmCall.name, permissions.canExecute)) {
         const deniedResult: ToolCallResult = {
           toolName: llmCall.name,
@@ -320,8 +313,8 @@ export async function executeAgentLoop(
         continue;
       }
 
-      // ii. Validate arguments before anything acts on them, so the user is
-      // never asked to confirm a malformed call.
+      // Validated before anything acts on the arguments, so the user is never
+      // asked to confirm a malformed call.
       if (toolDef.parameters) {
         const validation = validateArgs(llmCall.arguments, toolDef.parameters);
         if (!validation.valid) {
@@ -353,7 +346,6 @@ export async function executeAgentLoop(
         }
       }
 
-      // iii. Confirmation flow
       if (toolDef.confirm) {
         if (!options?.onConfirm) {
           if (debug) {
@@ -411,7 +403,6 @@ export async function executeAgentLoop(
         }
       }
 
-      // iv. Execute tool
       try {
         const result = await toolDef.handler(llmCall.arguments);
         const status = toolDef.confirm ? 'confirmed' : 'success';
@@ -461,7 +452,7 @@ export async function executeAgentLoop(
       }
     }
 
-    // Loop continues — send tool results back to LLM
+    // The next turn carries the tool results back to the model.
   }
 
   // The model was still calling tools when the turn budget ran out, so it never

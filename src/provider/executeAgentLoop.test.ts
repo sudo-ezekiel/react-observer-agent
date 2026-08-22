@@ -115,7 +115,7 @@ describe('executeAgentLoop', () => {
   });
 
   it('enforces maxTurns limit', async () => {
-    // LLM always returns tool calls — should stop after maxTurns
+    // The model never stops calling tools, so the turn budget is what ends it.
     const adapter = mockAdapter(
       ...Array.from({ length: 10 }, () => ({
         content: null,
@@ -427,7 +427,7 @@ describe('executeAgentLoop', () => {
     });
 
     expect(result.message).toBe('You have 2 items.');
-    // readState is internal — not in toolCalls
+    // readState is internal, so it stays out of toolCalls.
     expect(result.toolCalls).toEqual([]);
     expect(adapter.sendMessage).toHaveBeenCalledTimes(2);
 

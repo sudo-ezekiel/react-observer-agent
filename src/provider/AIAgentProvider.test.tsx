@@ -430,6 +430,5 @@ describe('state as function', () => {
     );
 
     expect(captured).toBeDefined();
-    // Provider renders without error with function state
   });
 });

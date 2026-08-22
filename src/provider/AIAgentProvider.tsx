@@ -37,7 +37,6 @@ export function AIAgentProvider({
   permissionsRef.current = permissions;
   optionsRef.current = options;
 
-  // Validate tool name uniqueness on mount
   useEffect(() => {
     validateToolNames(tools);
   }, [tools]);
