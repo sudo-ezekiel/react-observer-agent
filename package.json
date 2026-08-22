@@ -18,6 +18,7 @@
       }
     }
   },
+  "sideEffects": false,
   "files": [
     "dist"
   ],
@@ -27,7 +28,8 @@
     "format": "prettier --write 'src/**/*.{ts,tsx}'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx}'",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm run lint && npm run test"
   },
   "peerDependencies": {
     "react": ">=18.0.0"
@@ -50,13 +52,29 @@
     "react",
     "ai",
     "agent",
+    "ai-agent",
     "llm",
     "tools",
-    "state-management"
+    "tool-calling",
+    "function-calling",
+    "openai",
+    "anthropic",
+    "claude",
+    "state-management",
+    "zustand",
+    "redux"
   ],
   "license": "MIT",
+  "author": "Ezekiel (https://github.com/sudo-ezekiel)",
+  "engines": {
+    "node": ">=18"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/ezekiel/react-observer-agent"
+    "url": "git+https://github.com/sudo-ezekiel/react-observer-agent.git"
+  },
+  "homepage": "https://github.com/sudo-ezekiel/react-observer-agent#readme",
+  "bugs": {
+    "url": "https://github.com/sudo-ezekiel/react-observer-agent/issues"
   }
 }
