@@ -32,24 +32,5 @@ jobs:
       # `npm run format:check` is deliberately not gated here: it fails on files
       # that predate this workflow. Add it once the tree is Prettier clean.
 
-  example:
-    name: Typecheck example
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
-
-      # The example depends on the library via file:../../, so it reads dist/.
-      - run: npm run build
-
-      - run: npm ci
-        working-directory: examples/basic
-
-      - run: npx tsc --noEmit
-        working-directory: examples/basic
+      # Examples and docs live in sudo-ezekiel/react-observer-agent-examples and
+      # are built there, against the published package.

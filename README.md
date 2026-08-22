@@ -4,6 +4,8 @@
 
 A React library that lets an LLM agent observe your app's state, understand what the user is doing, and execute pre-defined actions, all through a declarative `<AIAgentProvider>` and registered tools, with permission boundaries built in.
 
+Docs and live examples: **[reactobserveragent.sudo-ezekiel.com](https://reactobserveragent.sudo-ezekiel.com)**
+
 This is an experimental project by a solo developer. I am exploring whether an AI agent can be useful inside a live React app without dumping your whole state into a prompt or letting the model run arbitrary code. It works and it is tested, but it remains a research project rather than a product. See the [disclaimer](#disclaimer).
 
 - Zero runtime dependencies (adapters use raw `fetch`, no SDKs)
@@ -231,10 +233,11 @@ Explicit non-goals for now: DOM awareness and page context mapping, automatic st
 
 ## Docs and examples
 
+- [reactobserveragent.sudo-ezekiel.com](https://reactobserveragent.sudo-ezekiel.com): guides, API reference, and live examples you can click through
+- [sudo-ezekiel/react-observer-agent-examples](https://github.com/sudo-ezekiel/react-observer-agent-examples): the source for that site, including a runnable Zustand shopping app that proxies both providers
 - [SPEC.md](SPEC.md): the full technical spec
 - [docs/internals.md](docs/internals.md): pull-based state rationale and execution loop detail
 - [CHANGELOG.md](CHANGELOG.md)
-- [examples/basic](examples/basic): a runnable Zustand shopping app that proxies both providers, with a smoke test script
 
 ## Disclaimer
 
