@@ -20,7 +20,7 @@ const getAppState = () => useAppStore.getState();
 export default function App() {
   return (
     <div style={{ padding: 24, fontFamily: 'system-ui, sans-serif' }}>
-      <h1>react-observer-agent — Basic Example</h1>
+      <h1>react-observer-agent: basic example</h1>
       <p>
         Current page: <strong>{useAppStore((s) => s.currentPage)}</strong> | Cart
         items: <strong>{useAppStore((s) => s.cart.length)}</strong> | Provider:{' '}

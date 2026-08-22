@@ -10,8 +10,8 @@ Technical documentation for contributors and maintainers. This covers how `react
 
 The naive approach to giving an AI agent access to app state is to dump the entire (filtered) state into the LLM context on every interaction. This has two issues:
 
-1. **Token waste** — For apps with large state trees, most of the state is irrelevant to any given question.
-2. **No differentiation** — The library becomes syntactic sugar over "serialize state + call LLM", which any developer can do in 10 lines.
+1. **Token waste.** For apps with large state trees, most of the state is irrelevant to any given question.
+2. **No differentiation.** The library becomes syntactic sugar over "serialize state + call LLM", which any developer can do in 10 lines.
 
 ### Solution
 
@@ -34,11 +34,11 @@ Agent responds: "You have Wireless Headphones in your cart."
 
 ### How It Works
 
-1. **State manifest** — On each interaction, `canAccess` keys are mapped to `{ key, description }` pairs. Descriptions come from `permissions.stateDescriptions` (falls back to the key name).
+1. **State manifest.** On each interaction, `canAccess` keys are mapped to `{ key, description }` pairs. Descriptions come from `permissions.stateDescriptions` (falls back to the key name).
 
-2. **System prompt injection** — The manifest is appended to the user's `systemPrompt` (or used alone if none is provided). The injected text lists available keys and instructs the agent to use `__readState`.
+2. **System prompt injection.** The manifest is appended to the user's `systemPrompt` (or used alone if none is provided). The injected text lists available keys and instructs the agent to use `__readState`.
 
-3. **Internal `__readState` tool** — Automatically added to the LLM's tool list when `canAccess` has at least one key. Its schema:
+3. **Internal `__readState` tool.** Automatically added to the LLM's tool list when `canAccess` has at least one key. Its schema:
    ```json
    {
      "name": "__readState",
@@ -57,17 +57,17 @@ Agent responds: "You have Wireless Headphones in your cart."
    }
    ```
 
-4. **Permission enforcement** — When `__readState` is called, only keys present in `canAccess` are resolved. Unauthorized keys are silently filtered out — the agent never sees values it shouldn't.
+4. **Permission enforcement.** When `__readState` is called, only keys present in `canAccess` are resolved. Unauthorized keys are silently filtered out, so the agent never sees values it should not.
 
-5. **State resolution** — The state source (object or getter function) is resolved on demand via `createStateSnapshot()`, the same function used before the refactor. The difference is it's now called per-`readState` call, not once upfront.
+5. **State resolution.** The state source (object or getter function) is resolved on demand via `createStateSnapshot()`, once per `__readState` call rather than once per interaction.
 
 ### What the User Sees
 
 `__readState` is **completely internal**. It does not appear in:
 
-- `AgentResponse.toolCalls` — Only user-defined tools are included.
-- `onToolCall` callback — Not fired for readState.
-- `history` / `ConversationEntry[]` — The user-facing history only includes the final agent text response.
+- `AgentResponse.toolCalls`. Only user-defined tools are included.
+- The `onToolCall` callback. Not fired for readState.
+- `history` / `ConversationEntry[]`. The user-facing history only includes the final agent text response.
 
 The LLM conversation internally contains readState calls (so the agent can reason over multiple turns), but these are stripped from all consumer-facing outputs.
 
@@ -92,16 +92,16 @@ The LLM conversation internally contains readState calls (so the agent can reaso
 
 - **`stateDescriptions`** is optional. If omitted, the key name itself is used as the description. Providing descriptions helps the LLM understand what each key contains without reading it.
 
-### ModelRequest Changes
+### What adapters receive
 
-The `ModelRequest` sent to adapters now includes:
+Two `ModelRequest` fields follow from the pull model:
 
-| Field | Before | After |
-|-------|--------|-------|
-| `state` | Filtered state values | `{}` (empty) |
-| `stateManifest` | _(didn't exist)_ | `[{ key: string, description: string }]` |
+| Field | Value | Notes |
+|-------|-------|-------|
+| `state` | Always `{}` | Vestigial. State values never travel with the request. |
+| `stateManifest` | `[{ key: string, description: string }]` | Informational, already rendered into `systemPrompt`. |
 
-Adapter authors can use `stateManifest` to build richer system prompts if desired. The default behavior injects it into `systemPrompt` automatically.
+Adapter authors can use `stateManifest` to build richer system prompts if desired. The loop injects it into `systemPrompt` either way.
 
 ---
 

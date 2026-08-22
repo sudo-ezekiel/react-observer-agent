@@ -28,7 +28,7 @@ The browser calls a same-origin `/api/openai` or `/api/anthropic` path, and `vit
 
 ## Smoke test
 
-Run these two prompts against each provider. Together they exercise the whole loop. Keep the browser console open, since `debug: true` logs every step.
+Run these three prompts against each provider. Together they exercise the whole loop. Keep the browser console open, since `debug: true` logs every step.
 
 **1. "What's in my cart?"**
 
