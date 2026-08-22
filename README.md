@@ -120,6 +120,8 @@ The library treats the LLM as an untrusted planner inside a capability sandbox.
 1. *Visibility*: the model never sees unlisted keys or tools, so it cannot request what it cannot see.
 2. *Execution*: names are re-validated after the model responds. A hallucinated or injected tool name is rejected with status `denied`, and `__readState` requests are re-filtered against `canAccess`.
 
+**Argument validation.** Tool arguments are checked against the tool's `parameters` JSON Schema before the handler runs, and before the confirmation prompt, so nobody is asked to approve a malformed call. Validation covers a deliberate subset (`type`, `properties`, `required`, `items`, `enum`) and ignores keywords outside it, so a richer schema validates on the parts the library understands instead of failing outright. Handlers should still treat args as untrusted, since unvalidated keywords pass through.
+
 **Human confirmation.** Tools registered with `confirm: true` route through your `onConfirm` handler before running. You own the UI: modal, toast, `window.confirm`, anything that resolves a boolean. If no handler is provided, the tool is skipped with status `cancelled`. Confirmation is never silently bypassed. Use it for anything irreversible or user-visible.
 
 **Prompt injection.** State often contains user-generated content (reviews, messages, profile fields). Once serialized into the conversation, that content can attempt prompt injection. The permission and confirmation layers are the backstop: an injected instruction can at worst invoke allowlisted tools, and confirmed tools still require a human yes.
@@ -139,26 +141,21 @@ The backend holds the real key, applies auth and rate limits, and forwards to th
 
 | Adapter | Status | Defaults |
 |---------|--------|----------|
-| `openAIAdapter` | Shipped | OpenAI chat completions; model `gpt-4o`, temperature `0.2` |
-| `claudeAdapter` | Shipped | Anthropic Messages API; model `claude-opus-5`, `maxTokens` `16000` |
+| `openAIAdapter` | Built in | OpenAI chat completions; model `gpt-4o`, temperature `0.2` |
+| `claudeAdapter` | Built in | Anthropic Messages API; model `claude-opus-5`, `maxTokens` `16000` |
 | `ollamaAdapter` | Planned | Local models via Ollama |
 | Custom | Supported | Implement `ModelAdapter` and pass it to the provider |
 
 Both built-in adapters are raw `fetch`, no SDK dependency. Both require either `apiKey` or `baseURL` and throw at construction with neither. `claudeAdapter` sends no sampling parameters, since current Claude models reject them.
 
-## What shipped in v0.2.0
+## How `send()` behaves
 
-Beyond the Claude adapter, v0.2.0 added:
+Each `send()` runs a turn loop of at most `options.maxTurns` model round trips (default 5). A few behaviors worth knowing:
 
+- **Conversation memory.** The prior LLM transcript is replayed with tool calls and their results intact across `send()` calls, so the agent remembers what it already did. `clearHistory()` resets it.
 - **Cancellation.** `send(message, { signal })` takes an `AbortSignal`. Aborts resolve with `error.code: 'ABORTED'` rather than throwing, and deliberately do not fire `onError`, since a cancel is a caller decision, not a failure.
-- **Runtime argument validation.** Tool arguments are checked against the tool's `parameters` JSON Schema before the handler runs, and before the confirmation prompt, so nobody is asked to approve a malformed call. Validation covers a deliberate subset (`type`, `properties`, `required`, `items`, `enum`) and ignores keywords outside it, so a richer schema validates on the parts the library understands instead of failing outright. Handlers should still treat args as untrusted.
-- **Structured conversation replay.** The prior LLM transcript is replayed with tool calls and their results intact across `send()` calls, so the agent remembers what it already did.
-- **`AgentResponse.usage`**: prompt and completion tokens totalled across every model call in the interaction, when the adapter reports them.
-- **Typed `MAX_TURNS` error** when the turn budget (default 5, configurable via `options.maxTurns`) runs out while the model is still calling tools.
-
-Also worth knowing: a tool needs a `description` to be shown to the model, and omitting `parameters` substitutes the empty object schema. Names beginning with `__` are reserved for internal tools and rejected on mount.
-
-Full details in [CHANGELOG.md](CHANGELOG.md).
+- **Turn budget.** When `maxTurns` runs out while the model is still calling tools, `send()` resolves with `error.code: 'MAX_TURNS'` and whatever tool calls accumulated.
+- **Token usage.** `AgentResponse.usage` totals prompt and completion tokens across every model call in the interaction, when the adapter reports them.
 
 ## API reference
 
@@ -173,6 +170,8 @@ Everything the package exports:
 | `claudeAdapter(config)` | Anthropic Messages API adapter |
 | `validateToolNames`, `filterState`, `filterTools`, `validateToolCall` | Building blocks for testing and custom wiring; typical apps never call these |
 | Types | `ModelAdapter`, `AgentResponse`, `ToolDefinition`, and the rest of `src/types.ts` |
+
+On `registerTool`: a tool needs a `description` to be shown to the model, and omitting `parameters` substitutes the empty object schema. Names beginning with `__` are reserved for internal tools (`__readState`) and rejected on mount, as are duplicate names.
 
 ### `<AIAgentProvider>` props
 
@@ -218,11 +217,9 @@ Tool call statuses in `AgentResponse.toolCalls` and `onToolCall`: `success`, `co
 
 The full contracts, including the `ModelAdapter` interface for writing custom adapters, are in [SPEC.md](SPEC.md).
 
-## Roadmap
+## What's next
 
-Done in v0.2.0: tool registry, pull-based state, two-layer permissions, confirmation flow, argument validation, abort support, structured replay, usage aggregation, OpenAI and Claude adapters, debug logging.
-
-Next, in rough priority order:
+In rough priority order:
 
 1. `ollamaAdapter` for local models
 2. Streaming responses
