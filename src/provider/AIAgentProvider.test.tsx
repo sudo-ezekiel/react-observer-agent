@@ -369,6 +369,79 @@ describe('error reporting', () => {
   });
 });
 
+describe('a throwing onError callback', () => {
+  function createAlwaysToolCallModel(): ModelAdapter {
+    return {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'increment', arguments: {} }],
+      }),
+    };
+  }
+
+  it('propagates the callback error, fires onError once, and leaves one assistant entry with the real MAX_TURNS response', async () => {
+    const onError = vi.fn(() => {
+      throw new Error('boom');
+    });
+    const model = createAlwaysToolCallModel();
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider
+        {...createDefaultProps({
+          model,
+          options: { maxTurns: 1, onError },
+        })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    let caught: unknown;
+    await act(async () => {
+      try {
+        await ctx!.send('hi');
+      } catch (error) {
+        caught = error;
+      }
+    });
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe('boom');
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(ctx!.history.map((entry) => entry.role)).toEqual([
+      'user',
+      'assistant',
+    ]);
+    expect(ctx!.lastResponse?.error?.code).toBe('MAX_TURNS');
+    expect(ctx!.isProcessing).toBe(false);
+
+    let caughtSecond: unknown;
+    await act(async () => {
+      try {
+        await ctx!.send('again');
+      } catch (error) {
+        caughtSecond = error;
+      }
+    });
+
+    expect(caughtSecond).toBeInstanceOf(Error);
+    expect((caughtSecond as Error).message).toBe('boom');
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(ctx!.history.map((entry) => entry.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(ctx!.isProcessing).toBe(false);
+  });
+});
+
 describe('conversation replay', () => {
   function sentMessages(model: ModelAdapter, callIndex: number) {
     return (model.sendMessage as ReturnType<typeof vi.fn>).mock.calls[
