@@ -96,7 +96,10 @@ describe('openAIAdapter', () => {
     });
 
     it('creates adapter with both apiKey and baseURL', () => {
-      const adapter = openAIAdapter({ apiKey: 'sk-test', baseURL: '/api/agent' });
+      const adapter = openAIAdapter({
+        apiKey: 'sk-test',
+        baseURL: '/api/agent',
+      });
       expect(adapter).toBeDefined();
     });
   });
@@ -136,7 +139,10 @@ describe('openAIAdapter', () => {
             {
               name: 'addToCart',
               description: 'Add item to cart',
-              parameters: { type: 'object', properties: { productId: { type: 'string' } } },
+              parameters: {
+                type: 'object',
+                properties: { productId: { type: 'string' } },
+              },
             },
           ],
         }),
@@ -149,7 +155,10 @@ describe('openAIAdapter', () => {
           function: {
             name: 'addToCart',
             description: 'Add item to cart',
-            parameters: { type: 'object', properties: { productId: { type: 'string' } } },
+            parameters: {
+              type: 'object',
+              properties: { productId: { type: 'string' } },
+            },
           },
         },
       ]);
@@ -165,7 +174,10 @@ describe('openAIAdapter', () => {
       );
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(body.messages[0]).toEqual({ role: 'system', content: 'You are a helpful assistant.' });
+      expect(body.messages[0]).toEqual({
+        role: 'system',
+        content: 'You are a helpful assistant.',
+      });
       expect(body.messages[1]).toEqual({ role: 'user', content: 'Hello' });
     });
 
@@ -229,7 +241,12 @@ describe('openAIAdapter', () => {
       await adapter.sendMessage(
         createRequest({
           messages: [
-            { role: 'tool', content: '{"result": true}', toolCallId: 'call_123', toolCalls: [] },
+            {
+              role: 'tool',
+              content: '{"result": true}',
+              toolCallId: 'call_123',
+              toolCalls: [],
+            },
           ],
         }),
       );
@@ -251,7 +268,11 @@ describe('openAIAdapter', () => {
               role: 'assistant',
               content: 'Adding it now.',
               toolCalls: [
-                { id: 'call_123', name: 'addToCart', arguments: { productId: 'abc' } },
+                {
+                  id: 'call_123',
+                  name: 'addToCart',
+                  arguments: { productId: 'abc' },
+                },
               ],
             },
             {
@@ -290,7 +311,13 @@ describe('openAIAdapter', () => {
             {
               role: 'assistant',
               content: '',
-              toolCalls: [{ id: 'call_1', name: '__readState', arguments: { keys: ['cart'] } }],
+              toolCalls: [
+                {
+                  id: 'call_1',
+                  name: '__readState',
+                  arguments: { keys: ['cart'] },
+                },
+              ],
             },
           ],
         }),
@@ -298,7 +325,9 @@ describe('openAIAdapter', () => {
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       expect(body.messages[0].content).toBeNull();
-      expect(body.messages[0].tool_calls[0].function.arguments).toBe('{"keys":["cart"]}');
+      expect(body.messages[0].tool_calls[0].function.arguments).toBe(
+        '{"keys":["cart"]}',
+      );
     });
 
     it('omits tool_calls for messages without them', async () => {
@@ -317,7 +346,10 @@ describe('openAIAdapter', () => {
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       expect(body.messages[0]).toEqual({ role: 'user', content: 'Hello' });
-      expect(body.messages[1]).toEqual({ role: 'assistant', content: 'Hi there' });
+      expect(body.messages[1]).toEqual({
+        role: 'assistant',
+        content: 'Hi there',
+      });
     });
 
     it('skips assistant messages with empty content and no tool calls', async () => {
@@ -467,7 +499,9 @@ describe('openAIAdapter', () => {
 
   describe('error handling', () => {
     it('throws on network error', async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error('Connection refused'));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error('Connection refused'));
 
       const adapter = openAIAdapter({ apiKey: 'sk-test' });
       await expect(adapter.sendMessage(createRequest())).rejects.toThrow(
@@ -498,7 +532,10 @@ describe('openAIAdapter', () => {
     });
 
     it('throws on non-OK status', async () => {
-      globalThis.fetch = mockFetch({ error: { message: 'Rate limit exceeded' } }, 429);
+      globalThis.fetch = mockFetch(
+        { error: { message: 'Rate limit exceeded' } },
+        429,
+      );
 
       const adapter = openAIAdapter({ apiKey: 'sk-test' });
       await expect(adapter.sendMessage(createRequest())).rejects.toThrow(

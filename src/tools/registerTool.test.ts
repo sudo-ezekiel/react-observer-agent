@@ -22,14 +22,10 @@ describe('registerTool', () => {
       required: ['id'],
     };
 
-    const tool = registerTool(
-      'addItem',
-      (_args: { id: string }) => 'added',
-      {
-        description: 'Add an item',
-        parameters: params,
-      },
-    );
+    const tool = registerTool('addItem', (_args: { id: string }) => 'added', {
+      description: 'Add an item',
+      parameters: params,
+    });
 
     expect(tool.name).toBe('addItem');
     expect(tool.description).toBe('Add an item');
@@ -88,7 +84,13 @@ describe('registerTool', () => {
     const tool = registerTool<{ path: string }>(
       'deleteFile',
       (args) => `deleted ${args.path}`,
-      { description: 'Delete a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } },
+      {
+        description: 'Delete a file',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+        },
+      },
     );
 
     expect(tool.name).toBe('deleteFile');
@@ -97,7 +99,10 @@ describe('registerTool', () => {
   });
 
   it('accepts a plain ToolOptions variable with no schema at runtime', () => {
-    const options: ToolOptions = { description: 'Plain options', confirm: true };
+    const options: ToolOptions = {
+      description: 'Plain options',
+      confirm: true,
+    };
 
     const tool = registerTool('plainOptionsTool', () => 'ok', options);
 

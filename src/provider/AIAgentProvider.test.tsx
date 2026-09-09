@@ -5,7 +5,13 @@ import { AIAgentProvider } from './AIAgentProvider';
 import { useAgent } from './useAgent';
 import { registerTool } from '../tools/registerTool';
 import { AdapterError } from '../adapters/AdapterError';
-import type { AgentResponse, ModelAdapter, ModelResponse, PermissionsConfig, ToolDefinition } from '../types';
+import type {
+  AgentResponse,
+  ModelAdapter,
+  ModelResponse,
+  PermissionsConfig,
+  ToolDefinition,
+} from '../types';
 
 function createMockAdapter(response?: Partial<ModelResponse>): ModelAdapter {
   return {
@@ -22,7 +28,9 @@ const defaultPermissions: PermissionsConfig = {
   canExecute: ['increment'],
 };
 
-function createDefaultProps(overrides: Partial<Parameters<typeof AIAgentProvider>[0]> = {}) {
+function createDefaultProps(
+  overrides: Partial<Parameters<typeof AIAgentProvider>[0]> = {},
+) {
   return {
     model: createMockAdapter(),
     state: { count: 0 },
@@ -32,7 +40,11 @@ function createDefaultProps(overrides: Partial<Parameters<typeof AIAgentProvider
   };
 }
 
-function TestConsumer({ onContext }: { onContext: (ctx: ReturnType<typeof useAgent>) => void }) {
+function TestConsumer({
+  onContext,
+}: {
+  onContext: (ctx: ReturnType<typeof useAgent>) => void;
+}) {
   const ctx = useAgent();
   onContext(ctx);
   return <div data-testid="consumer">ready</div>;
@@ -69,7 +81,11 @@ describe('AIAgentProvider', () => {
 
     render(
       <AIAgentProvider {...createDefaultProps()}>
-        <TestConsumer onContext={(ctx) => { captured = ctx; }} />
+        <TestConsumer
+          onContext={(ctx) => {
+            captured = ctx;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -98,7 +114,11 @@ describe('send()', () => {
 
     render(
       <AIAgentProvider {...createDefaultProps()}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -118,7 +138,11 @@ describe('send()', () => {
 
     render(
       <AIAgentProvider {...createDefaultProps()}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -137,7 +161,11 @@ describe('send()', () => {
 
     render(
       <AIAgentProvider {...createDefaultProps()}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -153,7 +181,11 @@ describe('send()', () => {
 
     render(
       <AIAgentProvider {...createDefaultProps()}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -173,7 +205,11 @@ describe('clearHistory()', () => {
 
     render(
       <AIAgentProvider {...createDefaultProps()}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -208,7 +244,11 @@ describe('error reporting', () => {
       <AIAgentProvider
         {...createDefaultProps({ model, options: { maxTurns: 2, onError } })}
       >
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -229,7 +269,11 @@ describe('error reporting', () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ options: { onError } })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -254,7 +298,11 @@ describe('error reporting', () => {
           options: { onError },
         })}
       >
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -274,7 +322,11 @@ describe('error reporting', () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model, options: { onError } })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -293,8 +345,14 @@ describe('error reporting', () => {
 
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
-      <AIAgentProvider {...createDefaultProps({ model, options: { onError: vi.fn() } })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+      <AIAgentProvider
+        {...createDefaultProps({ model, options: { onError: vi.fn() } })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -313,7 +371,9 @@ describe('error reporting', () => {
 
 describe('conversation replay', () => {
   function sentMessages(model: ModelAdapter, callIndex: number) {
-    return (model.sendMessage as ReturnType<typeof vi.fn>).mock.calls[callIndex][0].messages;
+    return (model.sendMessage as ReturnType<typeof vi.fn>).mock.calls[
+      callIndex
+    ][0].messages;
   }
 
   it('replays prior tool calls and results with their structure intact', async () => {
@@ -330,7 +390,11 @@ describe('conversation replay', () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -351,7 +415,9 @@ describe('conversation replay', () => {
       arguments: { by: 1 },
     });
 
-    const toolResult = replayed.find((m: { role: string }) => m.role === 'tool');
+    const toolResult = replayed.find(
+      (m: { role: string }) => m.role === 'tool',
+    );
     expect(toolResult.toolCallId).toBe('call_1');
 
     // The final answer from the first interaction is replayed too.
@@ -371,7 +437,11 @@ describe('conversation replay', () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -385,7 +455,9 @@ describe('conversation replay', () => {
       await ctx!.send('second');
     });
 
-    expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+    expect(sentMessages(model, 1)).toEqual([
+      { role: 'user', content: 'second' },
+    ]);
   });
 
   it('drops the partial turn when the adapter throws', async () => {
@@ -397,8 +469,14 @@ describe('conversation replay', () => {
 
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
-      <AIAgentProvider {...createDefaultProps({ model, options: { onError: vi.fn() } })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+      <AIAgentProvider
+        {...createDefaultProps({ model, options: { onError: vi.fn() } })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -409,7 +487,9 @@ describe('conversation replay', () => {
       await ctx!.send('second');
     });
 
-    expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+    expect(sentMessages(model, 1)).toEqual([
+      { role: 'user', content: 'second' },
+    ]);
   });
 
   it('drops an aborted turn so no unanswered tool call is replayed', async () => {
@@ -429,7 +509,11 @@ describe('conversation replay', () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -440,13 +524,17 @@ describe('conversation replay', () => {
       await ctx!.send('second');
     });
 
-    expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+    expect(sentMessages(model, 1)).toEqual([
+      { role: 'user', content: 'second' },
+    ]);
   });
 });
 
 describe('send() queue', () => {
   function sentMessages(model: ModelAdapter, callIndex: number) {
-    return (model.sendMessage as ReturnType<typeof vi.fn>).mock.calls[callIndex][0].messages;
+    return (model.sendMessage as ReturnType<typeof vi.fn>).mock.calls[
+      callIndex
+    ][0].messages;
   }
 
   function createGate() {
@@ -463,7 +551,11 @@ describe('send() queue', () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -501,7 +593,11 @@ describe('send() queue', () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -531,13 +627,20 @@ describe('send() queue', () => {
         await gate;
         return { content: 'first', toolCalls: [] };
       })
-      .mockImplementationOnce(async () => ({ content: 'second', toolCalls: [] }));
+      .mockImplementationOnce(async () => ({
+        content: 'second',
+        toolCalls: [],
+      }));
     const model: ModelAdapter = { sendMessage };
 
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -558,7 +661,9 @@ describe('send() queue', () => {
       await ctx!.send('second');
     });
 
-    expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+    expect(sentMessages(model, 1)).toEqual([
+      { role: 'user', content: 'second' },
+    ]);
   });
 
   it('leaves history empty and lastResponse null after a send resolves following a mid-flight clearHistory', async () => {
@@ -572,7 +677,11 @@ describe('send() queue', () => {
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -601,13 +710,19 @@ describe('send() queue', () => {
     const model: ModelAdapter = {
       sendMessage: vi
         .fn()
-        .mockRejectedValue(new AdapterError('Claude API error: 401', { status: 401 })),
+        .mockRejectedValue(
+          new AdapterError('Claude API error: 401', { status: 401 }),
+        ),
     };
 
     let ctx: ReturnType<typeof useAgent> | undefined;
     render(
       <AIAgentProvider {...createDefaultProps({ model, options: { onError } })}>
-        <TestConsumer onContext={(c) => { ctx = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 
@@ -630,7 +745,11 @@ describe('state as function', () => {
 
     render(
       <AIAgentProvider {...createDefaultProps({ state: () => ({ count: 5 }) })}>
-        <TestConsumer onContext={(c) => { captured = c; }} />
+        <TestConsumer
+          onContext={(c) => {
+            captured = c;
+          }}
+        />
       </AIAgentProvider>,
     );
 

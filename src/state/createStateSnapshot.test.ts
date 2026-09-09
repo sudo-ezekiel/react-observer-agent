@@ -158,7 +158,12 @@ describe('createStateSnapshot', () => {
     });
 
     it('leaves undefined alone, since it has no serialized form', () => {
-      const result = createStateSnapshot({ missing: undefined }, ['missing'], false, 1);
+      const result = createStateSnapshot(
+        { missing: undefined },
+        ['missing'],
+        false,
+        1,
+      );
 
       expect(result).toEqual({ missing: undefined });
     });

@@ -24,7 +24,10 @@ describe.skipIf(!existsSync(cjsPath))('built package', () => {
     const built = require(cjsPath);
 
     for (const name of EXPECTED_EXPORTS) {
-      expect(built[name], `expected CJS export "${name}" to be defined`).toBeDefined();
+      expect(
+        built[name],
+        `expected CJS export "${name}" to be defined`,
+      ).toBeDefined();
     }
   });
 
@@ -32,7 +35,10 @@ describe.skipIf(!existsSync(cjsPath))('built package', () => {
     const built = await import(esmPath);
 
     for (const name of EXPECTED_EXPORTS) {
-      expect(built[name], `expected ESM export "${name}" to be defined`).toBeDefined();
+      expect(
+        built[name],
+        `expected ESM export "${name}" to be defined`,
+      ).toBeDefined();
     }
   });
 

@@ -36,7 +36,10 @@ function defaultTools(): ToolDefinition[] {
   return [
     registerTool('addToCart', (args: unknown) => ({ added: args }), {
       description: 'Add item to cart',
-      parameters: { type: 'object', properties: { productId: { type: 'string' } } },
+      parameters: {
+        type: 'object',
+        properties: { productId: { type: 'string' } },
+      },
     }),
     registerTool('clearCart', () => ({ cleared: true }), {
       description: 'Clear all cart items',
@@ -72,7 +75,9 @@ describe('executeAgentLoop', () => {
       // First: LLM requests tool call
       {
         content: null,
-        toolCalls: [{ id: 'call_1', name: 'addToCart', arguments: { productId: 'abc' } }],
+        toolCalls: [
+          { id: 'call_1', name: 'addToCart', arguments: { productId: 'abc' } },
+        ],
       },
       // Second: LLM responds with text after seeing tool result
       { content: 'Added to cart!' },
@@ -100,11 +105,15 @@ describe('executeAgentLoop', () => {
     const adapter = mockAdapter(
       {
         content: null,
-        toolCalls: [{ id: 'call_1', name: 'addToCart', arguments: { productId: 'a' } }],
+        toolCalls: [
+          { id: 'call_1', name: 'addToCart', arguments: { productId: 'a' } },
+        ],
       },
       {
         content: null,
-        toolCalls: [{ id: 'call_2', name: 'addToCart', arguments: { productId: 'b' } }],
+        toolCalls: [
+          { id: 'call_2', name: 'addToCart', arguments: { productId: 'b' } },
+        ],
       },
       { content: 'Both added!' },
     );
@@ -127,7 +136,9 @@ describe('executeAgentLoop', () => {
     const adapter = mockAdapter(
       ...Array.from({ length: 10 }, () => ({
         content: null,
-        toolCalls: [{ id: 'call_x', name: 'addToCart', arguments: { productId: 'x' } }],
+        toolCalls: [
+          { id: 'call_x', name: 'addToCart', arguments: { productId: 'x' } },
+        ],
       })),
     );
 
@@ -149,7 +160,9 @@ describe('executeAgentLoop', () => {
     const adapter = mockAdapter(
       ...Array.from({ length: 10 }, () => ({
         content: null,
-        toolCalls: [{ id: 'call_x', name: 'addToCart', arguments: { productId: 'x' } }],
+        toolCalls: [
+          { id: 'call_x', name: 'addToCart', arguments: { productId: 'x' } },
+        ],
       })),
     );
 
@@ -173,7 +186,9 @@ describe('executeAgentLoop', () => {
     const adapter = mockAdapter(
       {
         content: null,
-        toolCalls: [{ id: 'call_1', name: 'addToCart', arguments: { productId: 'a' } }],
+        toolCalls: [
+          { id: 'call_1', name: 'addToCart', arguments: { productId: 'a' } },
+        ],
       },
       { content: 'Added.' },
     );
@@ -318,7 +333,9 @@ describe('executeAgentLoop', () => {
     const adapter = mockAdapter(
       {
         content: null,
-        toolCalls: [{ id: 'call_1', name: 'addToCart', arguments: { productId: 'x' } }],
+        toolCalls: [
+          { id: 'call_1', name: 'addToCart', arguments: { productId: 'x' } },
+        ],
       },
       { content: 'Done!' },
     );
@@ -342,10 +359,16 @@ describe('executeAgentLoop', () => {
   });
 
   it('handles tool handler errors gracefully', async () => {
-    const failingTool = registerTool('failTool', () => { throw new Error('Tool broke'); }, {
-      description: 'A tool that fails',
-      parameters: { type: 'object' },
-    });
+    const failingTool = registerTool(
+      'failTool',
+      () => {
+        throw new Error('Tool broke');
+      },
+      {
+        description: 'A tool that fails',
+        parameters: { type: 'object' },
+      },
+    );
 
     const adapter = mockAdapter(
       {
@@ -379,7 +402,8 @@ describe('executeAgentLoop', () => {
       conversationHistory: [],
     });
 
-    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(callArgs.state).toEqual({});
   });
 
@@ -395,7 +419,8 @@ describe('executeAgentLoop', () => {
       conversationHistory: [],
     });
 
-    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(callArgs.systemPrompt).toContain('You are a test assistant.');
   });
 
@@ -410,8 +435,11 @@ describe('executeAgentLoop', () => {
       conversationHistory: [],
     });
 
-    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(callArgs.stateManifest).toEqual([{ key: 'count', description: 'count' }]);
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(callArgs.stateManifest).toEqual([
+      { key: 'count', description: 'count' },
+    ]);
     expect(callArgs.state).toEqual({});
   });
 
@@ -420,7 +448,9 @@ describe('executeAgentLoop', () => {
       // LLM calls readState to get cart
       {
         content: null,
-        toolCalls: [{ id: 'rs_1', name: '__readState', arguments: { keys: ['cart'] } }],
+        toolCalls: [
+          { id: 'rs_1', name: '__readState', arguments: { keys: ['cart'] } },
+        ],
       },
       // LLM responds with text after reading state
       { content: 'You have 2 items.' },
@@ -440,9 +470,11 @@ describe('executeAgentLoop', () => {
     expect(adapter.sendMessage).toHaveBeenCalledTimes(2);
 
     // Verify the tool result message sent back to LLM
-    const secondCall = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    const secondCall = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[1][0];
     const toolMsg = secondCall.messages.find(
-      (m: { role: string; toolCallId?: string }) => m.role === 'tool' && m.toolCallId === 'rs_1',
+      (m: { role: string; toolCallId?: string }) =>
+        m.role === 'tool' && m.toolCallId === 'rs_1',
     );
     expect(JSON.parse(toolMsg.content)).toEqual({ cart: ['item1', 'item2'] });
   });
@@ -452,7 +484,11 @@ describe('executeAgentLoop', () => {
       {
         content: null,
         toolCalls: [
-          { id: 'rs_1', name: '__readState', arguments: { keys: ['cart', 'secret'] } },
+          {
+            id: 'rs_1',
+            name: '__readState',
+            arguments: { keys: ['cart', 'secret'] },
+          },
         ],
       },
       { content: 'Only cart returned.' },
@@ -466,9 +502,11 @@ describe('executeAgentLoop', () => {
       conversationHistory: [],
     });
 
-    const secondCall = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    const secondCall = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[1][0];
     const toolMsg = secondCall.messages.find(
-      (m: { role: string; toolCallId?: string }) => m.role === 'tool' && m.toolCallId === 'rs_1',
+      (m: { role: string; toolCallId?: string }) =>
+        m.role === 'tool' && m.toolCallId === 'rs_1',
     );
     const parsed = JSON.parse(toolMsg.content);
     expect(parsed).toEqual({ cart: ['item'] });
@@ -480,12 +518,16 @@ describe('executeAgentLoop', () => {
       // Turn 1: read state
       {
         content: null,
-        toolCalls: [{ id: 'rs_1', name: '__readState', arguments: { keys: ['cart'] } }],
+        toolCalls: [
+          { id: 'rs_1', name: '__readState', arguments: { keys: ['cart'] } },
+        ],
       },
       // Turn 2: execute a tool
       {
         content: null,
-        toolCalls: [{ id: 'call_1', name: 'addToCart', arguments: { productId: 'abc' } }],
+        toolCalls: [
+          { id: 'call_1', name: 'addToCart', arguments: { productId: 'abc' } },
+        ],
       },
       // Turn 3: final response
       { content: 'Added to cart!' },
@@ -517,7 +559,8 @@ describe('executeAgentLoop', () => {
       conversationHistory: [],
     });
 
-    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const toolNames = callArgs.tools.map((t: { name: string }) => t.name);
     expect(toolNames).toContain('__readState');
   });
@@ -533,7 +576,8 @@ describe('executeAgentLoop', () => {
       conversationHistory: [],
     });
 
-    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     const toolNames = callArgs.tools.map((t: { name: string }) => t.name);
     expect(toolNames).not.toContain('__readState');
   });
@@ -556,7 +600,8 @@ describe('executeAgentLoop', () => {
       conversationHistory: [],
     });
 
-    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
     expect(callArgs.stateManifest).toEqual([
       { key: 'user', description: 'Current logged-in user profile' },
       { key: 'cart', description: 'Shopping cart contents' },
@@ -571,10 +616,15 @@ describe('executeAgentLoop', () => {
       const adapter = mockAdapter(
         {
           content: null,
-          toolCalls: [{ id: 'c1', name: 'addToCart', arguments: { productId: 'a' } }],
+          toolCalls: [
+            { id: 'c1', name: 'addToCart', arguments: { productId: 'a' } },
+          ],
           usage: { promptTokens: 100, completionTokens: 20 },
         },
-        { content: 'Added.', usage: { promptTokens: 150, completionTokens: 10 } },
+        {
+          content: 'Added.',
+          usage: { promptTokens: 150, completionTokens: 10 },
+        },
       );
 
       const result = await runLoop('add it', {
@@ -606,7 +656,9 @@ describe('executeAgentLoop', () => {
       const adapter = mockAdapter(
         ...Array.from({ length: 5 }, () => ({
           content: null,
-          toolCalls: [{ id: 'c', name: 'addToCart', arguments: { productId: 'x' } }],
+          toolCalls: [
+            { id: 'c', name: 'addToCart', arguments: { productId: 'x' } },
+          ],
           usage: { promptTokens: 10, completionTokens: 5 },
         })),
       );
@@ -658,7 +710,8 @@ describe('executeAgentLoop', () => {
         signal: controller.signal,
       });
 
-      const request = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const request = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(request.signal).toBe(controller.signal);
     });
 
@@ -689,7 +742,9 @@ describe('executeAgentLoop', () => {
           controller.abort();
           return {
             content: null,
-            toolCalls: [{ id: 'c1', name: 'addToCart', arguments: { productId: 'x' } }],
+            toolCalls: [
+              { id: 'c1', name: 'addToCart', arguments: { productId: 'x' } },
+            ],
           };
         }),
       };
@@ -743,7 +798,10 @@ describe('executeAgentLoop', () => {
         }),
       ];
       const adapter = mockAdapter(
-        { content: null, toolCalls: [{ id: 'c1', name: 'addToCart', arguments: {} }] },
+        {
+          content: null,
+          toolCalls: [{ id: 'c1', name: 'addToCart', arguments: {} }],
+        },
         { content: 'Sorry, I need a product id.' },
       );
 
@@ -773,10 +831,15 @@ describe('executeAgentLoop', () => {
         }),
       ];
       const adapter = mockAdapter(
-        { content: null, toolCalls: [{ id: 'c1', name: 'addToCart', arguments: {} }] },
         {
           content: null,
-          toolCalls: [{ id: 'c2', name: 'addToCart', arguments: { productId: 'p1' } }],
+          toolCalls: [{ id: 'c1', name: 'addToCart', arguments: {} }],
+        },
+        {
+          content: null,
+          toolCalls: [
+            { id: 'c2', name: 'addToCart', arguments: { productId: 'p1' } },
+          ],
         },
         { content: 'Added.' },
       );
@@ -789,15 +852,21 @@ describe('executeAgentLoop', () => {
         conversationHistory: [],
       });
 
-      const secondRequest = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1][0];
+      const secondRequest = (adapter.sendMessage as ReturnType<typeof vi.fn>)
+        .mock.calls[1][0];
       const toolMessage = secondRequest.messages.find(
         (m: { role: string }) => m.role === 'tool',
       );
-      expect(JSON.parse(toolMessage.content).error).toContain('productId is required');
+      expect(JSON.parse(toolMessage.content).error).toContain(
+        'productId is required',
+      );
 
       expect(handler).toHaveBeenCalledOnce();
       expect(result.message).toBe('Added.');
-      expect(result.toolCalls.map((c) => c.status)).toEqual(['error', 'success']);
+      expect(result.toolCalls.map((c) => c.status)).toEqual([
+        'error',
+        'success',
+      ]);
     });
 
     it('does not ask for confirmation on an invalid call', async () => {
@@ -815,7 +884,10 @@ describe('executeAgentLoop', () => {
         }),
       ];
       const adapter = mockAdapter(
-        { content: null, toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }] },
+        {
+          content: null,
+          toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+        },
         { content: 'done' },
       );
 
@@ -837,7 +909,9 @@ describe('executeAgentLoop', () => {
       const adapter = mockAdapter(
         {
           content: null,
-          toolCalls: [{ id: 'c1', name: 'freeForm', arguments: { whatever: 1 } }],
+          toolCalls: [
+            { id: 'c1', name: 'freeForm', arguments: { whatever: 1 } },
+          ],
         },
         { content: 'done' },
       );
@@ -845,7 +919,9 @@ describe('executeAgentLoop', () => {
       const result = await runLoop('go', {
         model: adapter,
         state: {},
-        tools: [registerTool('freeForm', handler, { description: 'Anything goes' })],
+        tools: [
+          registerTool('freeForm', handler, { description: 'Anything goes' }),
+        ],
         permissions: { canAccess: [], canExecute: ['freeForm'] },
         conversationHistory: [],
       });
@@ -872,7 +948,8 @@ describe('executeAgentLoop', () => {
         conversationHistory: [],
       });
 
-      const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(callArgs.tools).toEqual([
         {
           name: 'clearCart',
@@ -896,7 +973,8 @@ describe('executeAgentLoop', () => {
         conversationHistory: [],
       });
 
-      const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const callArgs = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(callArgs.tools).toEqual([]);
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining('has no description and is hidden'),
@@ -908,7 +986,10 @@ describe('executeAgentLoop', () => {
     it('still executes a hidden tool when the LLM names it', async () => {
       const handler = vi.fn(() => ({ ok: true }));
       const adapter = mockAdapter(
-        { content: null, toolCalls: [{ id: 'c1', name: 'mysteryTool', arguments: {} }] },
+        {
+          content: null,
+          toolCalls: [{ id: 'c1', name: 'mysteryTool', arguments: {} }],
+        },
         { content: 'done' },
       );
 
@@ -932,18 +1013,23 @@ describe('executeAgentLoop state reads', () => {
       {
         content: null,
         // A model that sends `keys` as a bare string used to crash the loop.
-        toolCalls: [{ id: 'rs_1', name: '__readState', arguments: { keys: 'cart' } }],
+        toolCalls: [
+          { id: 'rs_1', name: '__readState', arguments: { keys: 'cart' } },
+        ],
       },
       { content: 'Let me try again.' },
     );
 
-    const { response, messages } = await executeAgentLoop('what is in my cart', {
-      model: adapter,
-      state: { cart: ['item'] },
-      tools: defaultTools(),
-      permissions: defaultPermissions,
-      conversationHistory: [],
-    });
+    const { response, messages } = await executeAgentLoop(
+      'what is in my cart',
+      {
+        model: adapter,
+        state: { cart: ['item'] },
+        tools: defaultTools(),
+        permissions: defaultPermissions,
+        conversationHistory: [],
+      },
+    );
 
     expect(response.error).toBeUndefined();
     expect(response.message).toBe('Let me try again.');
@@ -963,7 +1049,11 @@ describe('executeAgentLoop state reads', () => {
       {
         content: null,
         toolCalls: [
-          { id: 'rs_1', name: '__readState', arguments: { keys: ['big', 'small'] } },
+          {
+            id: 'rs_1',
+            name: '__readState',
+            arguments: { keys: ['big', 'small'] },
+          },
         ],
       },
       { content: 'read it' },
@@ -978,8 +1068,11 @@ describe('executeAgentLoop state reads', () => {
       conversationHistory: [],
     });
 
-    const secondCall = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[1][0];
-    const toolMsg = secondCall.messages.find((m: { role: string }) => m.role === 'tool');
+    const secondCall = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock
+      .calls[1][0];
+    const toolMsg = secondCall.messages.find(
+      (m: { role: string }) => m.role === 'tool',
+    );
     const parsed = JSON.parse(toolMsg.content);
 
     expect(parsed.small).toBe('ok');
@@ -992,7 +1085,10 @@ describe('executeAgentLoop state reads', () => {
 });
 
 describe('executeAgentLoop events', () => {
-  function collect(): { events: AgentEvent[]; onEvent: (e: AgentEvent) => void } {
+  function collect(): {
+    events: AgentEvent[];
+    onEvent: (e: AgentEvent) => void;
+  } {
     const events: AgentEvent[] = [];
     return { events, onEvent: (e) => events.push(e) };
   }
@@ -1002,11 +1098,15 @@ describe('executeAgentLoop events', () => {
     const adapter = mockAdapter(
       {
         content: null,
-        toolCalls: [{ id: 'rs_1', name: '__readState', arguments: { keys: ['cart'] } }],
+        toolCalls: [
+          { id: 'rs_1', name: '__readState', arguments: { keys: ['cart'] } },
+        ],
       },
       {
         content: null,
-        toolCalls: [{ id: 'c1', name: 'addToCart', arguments: { productId: 'a' } }],
+        toolCalls: [
+          { id: 'c1', name: 'addToCart', arguments: { productId: 'a' } },
+        ],
       },
       { content: 'Added.' },
     );
@@ -1049,7 +1149,11 @@ describe('executeAgentLoop events', () => {
       {
         content: null,
         toolCalls: [
-          { id: 'rs_1', name: '__readState', arguments: { keys: ['cart', 'secret'] } },
+          {
+            id: 'rs_1',
+            name: '__readState',
+            arguments: { keys: ['cart', 'secret'] },
+          },
         ],
       },
       { content: 'done' },
@@ -1074,7 +1178,10 @@ describe('executeAgentLoop events', () => {
   it('pairs a tool_start with a tool_end for a denied tool', async () => {
     const { events, onEvent } = collect();
     const adapter = mockAdapter(
-      { content: null, toolCalls: [{ id: 'c1', name: 'deleteAccount', arguments: {} }] },
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'deleteAccount', arguments: {} }],
+      },
       { content: 'Cannot do that.' },
     );
 
@@ -1089,14 +1196,20 @@ describe('executeAgentLoop events', () => {
 
     const toolEvents = events.filter((e) => e.type !== 'turn_start');
     expect(toolEvents.map((e) => e.type)).toEqual(['tool_start', 'tool_end']);
-    expect(toolEvents[1]).toMatchObject({ toolName: 'deleteAccount', status: 'denied' });
+    expect(toolEvents[1]).toMatchObject({
+      toolName: 'deleteAccount',
+      status: 'denied',
+    });
   });
 
   it('reports a permitted name with no definition through onToolCall', async () => {
     const onToolCall = vi.fn();
     const { events, onEvent } = collect();
     const adapter = mockAdapter(
-      { content: null, toolCalls: [{ id: 'c1', name: 'ghostTool', arguments: {} }] },
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'ghostTool', arguments: {} }],
+      },
       { content: 'That tool is missing.' },
     );
 
@@ -1151,7 +1264,10 @@ describe('executeAgentLoop tool execution', () => {
     const controller = new AbortController();
     const onConfirm = vi.fn().mockResolvedValue(true);
     const adapter = mockAdapter(
-      { content: null, toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }] },
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+      },
       { content: 'Cleared.' },
     );
 
@@ -1227,14 +1343,21 @@ describe('executeAgentLoop tool execution', () => {
       return circular;
     };
     const adapter = mockAdapter(
-      { content: null, toolCalls: [{ id: 'c1', name: 'getCircular', arguments: {} }] },
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'getCircular', arguments: {} }],
+      },
       { content: 'That did not work.' },
     );
 
     const result = await runLoop('get it', {
       model: adapter,
       state: {},
-      tools: [registerTool('getCircular', handler, { description: 'Returns a cycle' })],
+      tools: [
+        registerTool('getCircular', handler, {
+          description: 'Returns a cycle',
+        }),
+      ],
       permissions: { canAccess: [], canExecute: ['getCircular'] },
       options: { onToolCall },
       conversationHistory: [],
@@ -1242,7 +1365,9 @@ describe('executeAgentLoop tool execution', () => {
 
     expect(result.toolCalls).toHaveLength(1);
     expect(result.toolCalls[0].status).toBe('error');
-    expect(result.toolCalls[0].result).toContain('Tool result is not serializable');
+    expect(result.toolCalls[0].result).toContain(
+      'Tool result is not serializable',
+    );
     expect(onToolCall).toHaveBeenCalledOnce();
   });
 
@@ -1292,7 +1417,9 @@ describe('executeAgentLoop tool execution', () => {
         validate: async (value) => {
           const input = value as { name?: unknown };
           if (typeof input?.name !== 'string') {
-            return { issues: [{ message: 'expected a string', path: ['name'] }] };
+            return {
+              issues: [{ message: 'expected a string', path: ['name'] }],
+            };
           }
           return { value: { name: input.name.toUpperCase() } };
         },
@@ -1311,7 +1438,9 @@ describe('executeAgentLoop tool execution', () => {
     const result = await runLoop('rename it', {
       model: adapter,
       state: {},
-      tools: [registerTool('rename', handler, { description: 'Rename', schema })],
+      tools: [
+        registerTool('rename', handler, { description: 'Rename', schema }),
+      ],
       permissions: { canAccess: [], canExecute: ['rename'] },
       conversationHistory: [],
     });
@@ -1329,7 +1458,9 @@ describe('executeAgentLoop tool execution', () => {
         validate: (value) => {
           const input = value as { name?: unknown };
           if (typeof input?.name !== 'string') {
-            return { issues: [{ message: 'expected a string', path: ['name'] }] };
+            return {
+              issues: [{ message: 'expected a string', path: ['name'] }],
+            };
           }
           return { value: { name: input.name } };
         },
@@ -1338,14 +1469,19 @@ describe('executeAgentLoop tool execution', () => {
 
     const handler = vi.fn();
     const adapter = mockAdapter(
-      { content: null, toolCalls: [{ id: 'c1', name: 'rename', arguments: { name: 7 } }] },
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'rename', arguments: { name: 7 } }],
+      },
       { content: 'Sorry.' },
     );
 
     const result = await runLoop('rename it', {
       model: adapter,
       state: {},
-      tools: [registerTool('rename', handler, { description: 'Rename', schema })],
+      tools: [
+        registerTool('rename', handler, { description: 'Rename', schema }),
+      ],
       permissions: { canAccess: [], canExecute: ['rename'] },
       conversationHistory: [],
     });
@@ -1399,9 +1535,14 @@ describe('executeAgentLoop tool execution', () => {
   });
 
   it('records onConfirm rejecting with a plain error as a tool error and continues the loop', async () => {
-    const onConfirm = vi.fn().mockRejectedValue(new Error('confirmation UI crashed'));
+    const onConfirm = vi
+      .fn()
+      .mockRejectedValue(new Error('confirmation UI crashed'));
     const adapter = mockAdapter(
-      { content: null, toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }] },
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+      },
       { content: 'Handled it.' },
     );
 
@@ -1468,7 +1609,9 @@ describe('executeAgentLoop tool execution', () => {
     const { response, messages } = await executeAgentLoop('rename it', {
       model: adapter,
       state: {},
-      tools: [registerTool('rename', handler, { description: 'Rename', schema })],
+      tools: [
+        registerTool('rename', handler, { description: 'Rename', schema }),
+      ],
       permissions: { canAccess: [], canExecute: ['rename'] },
       conversationHistory: [],
       signal: controller.signal,
@@ -1501,14 +1644,19 @@ describe('executeAgentLoop tool execution', () => {
     const onToolCall = vi.fn();
     const events: AgentEvent[] = [];
     const adapter = mockAdapter(
-      { content: null, toolCalls: [{ id: 'c1', name: 'rename', arguments: { name: 'ada' } }] },
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'rename', arguments: { name: 'ada' } }],
+      },
       { content: 'Renamed.' },
     );
 
     const result = await runLoop('rename it', {
       model: adapter,
       state: {},
-      tools: [registerTool('rename', handler, { description: 'Rename', schema })],
+      tools: [
+        registerTool('rename', handler, { description: 'Rename', schema }),
+      ],
       permissions: { canAccess: [], canExecute: ['rename'] },
       options: { onToolCall, onEvent: (e) => events.push(e) },
       conversationHistory: [],
@@ -1640,12 +1788,16 @@ describe('executeAgentLoop transcript', () => {
   });
 
   it('carries providerData onto the assistant messages it pushes', async () => {
-    const toolTurnBlocks = [{ type: 'thinking', thinking: 'hmm', signature: 'sig-1' }];
+    const toolTurnBlocks = [
+      { type: 'thinking', thinking: 'hmm', signature: 'sig-1' },
+    ];
     const finalBlocks = [{ type: 'text', text: 'Added.' }];
     const adapter = mockAdapter(
       {
         content: null,
-        toolCalls: [{ id: 'c1', name: 'addToCart', arguments: { productId: 'a' } }],
+        toolCalls: [
+          { id: 'c1', name: 'addToCart', arguments: { productId: 'a' } },
+        ],
         providerData: toolTurnBlocks,
       },
       { content: 'Added.', providerData: finalBlocks },

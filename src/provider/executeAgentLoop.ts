@@ -87,7 +87,8 @@ class UsageTotal {
     };
     // Only providers with a cache report these, so a zero would be a claim.
     if (this.cacheReadTokens > 0) total.cacheReadTokens = this.cacheReadTokens;
-    if (this.cacheWriteTokens > 0) total.cacheWriteTokens = this.cacheWriteTokens;
+    if (this.cacheWriteTokens > 0)
+      total.cacheWriteTokens = this.cacheWriteTokens;
     return total;
   }
 }
@@ -110,21 +111,24 @@ function buildStateManifest(
   }));
 }
 
-function buildStateManifestPrompt(manifest: { key: string; description: string }[]): string {
+function buildStateManifestPrompt(
+  manifest: { key: string; description: string }[],
+): string {
   if (manifest.length === 0) return '';
   const lines = manifest.map((m) => `- ${m.key}: ${m.description}`);
   return [
     'Available application state (use the __readState tool to access specific keys when needed):',
     ...lines,
     '',
-    'Only request state keys relevant to the user\'s question. Do not read all keys at once unless necessary.',
+    "Only request state keys relevant to the user's question. Do not read all keys at once unless necessary.",
   ].join('\n');
 }
 
 function buildReadStateToolDef(): LLMToolDefinition {
   return {
     name: READ_STATE_TOOL_NAME,
-    description: 'Read specific keys from the application state. Only request keys you need.',
+    description:
+      'Read specific keys from the application state. Only request keys you need.',
     parameters: READ_STATE_SCHEMA,
   };
 }
@@ -144,7 +148,10 @@ export async function executeAgentLoop(
   );
 
   if (debug) {
-    console.log('[react-observer-agent] State manifest:', stateManifest.map((m) => m.key));
+    console.log(
+      '[react-observer-agent] State manifest:',
+      stateManifest.map((m) => m.key),
+    );
   }
 
   const allowedTools = filterTools(tools, permissions.canExecute);
@@ -174,7 +181,10 @@ export async function executeAgentLoop(
   }
 
   if (debug) {
-    console.log('[react-observer-agent] Available tools:', llmTools.map((t) => t.name));
+    console.log(
+      '[react-observer-agent] Available tools:',
+      llmTools.map((t) => t.name),
+    );
   }
 
   const toolMap = new Map(allowedTools.map((t) => [t.name, t]));
@@ -185,9 +195,9 @@ export async function executeAgentLoop(
   ];
 
   const manifestPrompt = buildStateManifestPrompt(stateManifest);
-  const systemPrompt = [options?.systemPrompt, manifestPrompt]
-    .filter(Boolean)
-    .join('\n\n') || undefined;
+  const systemPrompt =
+    [options?.systemPrompt, manifestPrompt].filter(Boolean).join('\n\n') ||
+    undefined;
 
   const allToolCalls: ToolCallResult[] = [];
   const usage = new UsageTotal();
@@ -249,7 +259,10 @@ export async function executeAgentLoop(
     });
     messages.push({
       role: 'tool',
-      content: JSON.stringify({ status: 'cancelled', reason: 'Interaction aborted' }),
+      content: JSON.stringify({
+        status: 'cancelled',
+        reason: 'Interaction aborted',
+      }),
       toolCallId,
     });
     return abortedResult();
@@ -345,7 +358,10 @@ export async function executeAgentLoop(
       if (llmCall.name === READ_STATE_TOOL_NAME) {
         // Validated against the schema the tool advertises, since a model that
         // sends `keys` as a string would otherwise crash the loop.
-        const readValidation = validateArgs(llmCall.arguments, READ_STATE_SCHEMA);
+        const readValidation = validateArgs(
+          llmCall.arguments,
+          READ_STATE_SCHEMA,
+        );
         if (!readValidation.valid) {
           const errorMessage = `Invalid arguments for ${READ_STATE_TOOL_NAME}: ${readValidation.errors.join('; ')}`;
 
@@ -367,7 +383,9 @@ export async function executeAgentLoop(
           (k): k is string => typeof k === 'string',
         );
 
-        const allowedKeys = requestedKeys.filter((k) => permissions.canAccess.includes(k));
+        const allowedKeys = requestedKeys.filter((k) =>
+          permissions.canAccess.includes(k),
+        );
         const snapshot = createStateSnapshot(
           state,
           allowedKeys,
@@ -376,12 +394,19 @@ export async function executeAgentLoop(
         );
 
         if (debug) {
-          console.log('[react-observer-agent] readState requested:', requestedKeys);
+          console.log(
+            '[react-observer-agent] readState requested:',
+            requestedKeys,
+          );
           console.log('[react-observer-agent] readState allowed:', allowedKeys);
           console.log('[react-observer-agent] readState result:', snapshot);
         }
 
-        emit({ type: 'state_read', requested: requestedKeys, keys: allowedKeys });
+        emit({
+          type: 'state_read',
+          requested: requestedKeys,
+          keys: allowedKeys,
+        });
 
         messages.push({
           role: 'tool',
@@ -394,7 +419,11 @@ export async function executeAgentLoop(
 
       // Fired before the permission check so that a denied call is as visible
       // as an executed one, and every start has a matching end.
-      emit({ type: 'tool_start', toolName: llmCall.name, args: llmCall.arguments });
+      emit({
+        type: 'tool_start',
+        toolName: llmCall.name,
+        args: llmCall.arguments,
+      });
 
       // Re-checked after the model answered, so a hallucinated or injected
       // name is rejected even though it was never advertised.
@@ -479,12 +508,16 @@ export async function executeAgentLoop(
           record({
             toolName: llmCall.name,
             args: value,
-            result: 'Tool execution cancelled: no confirmation handler provided',
+            result:
+              'Tool execution cancelled: no confirmation handler provided',
             status: 'cancelled',
           });
           messages.push({
             role: 'tool',
-            content: JSON.stringify({ status: 'cancelled', reason: 'No confirmation handler' }),
+            content: JSON.stringify({
+              status: 'cancelled',
+              reason: 'No confirmation handler',
+            }),
             toolCallId: llmCall.id,
           });
           continue;
@@ -536,7 +569,10 @@ export async function executeAgentLoop(
           });
           messages.push({
             role: 'tool',
-            content: JSON.stringify({ status: 'cancelled', reason: 'User denied' }),
+            content: JSON.stringify({
+              status: 'cancelled',
+              reason: 'User denied',
+            }),
             toolCallId: llmCall.id,
           });
           continue;
@@ -556,7 +592,9 @@ export async function executeAgentLoop(
         try {
           content = JSON.stringify({ result });
         } catch (error) {
-          throw new Error(`Tool result is not serializable: ${describeError(error)}`);
+          throw new Error(
+            `Tool result is not serializable: ${describeError(error)}`,
+          );
         }
 
         outcome = { kind: 'success', result, content };

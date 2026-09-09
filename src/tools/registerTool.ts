@@ -17,7 +17,10 @@ export function registerTool<S extends StandardSchemaV1>(
  * keeps a schema whose output disagrees with that type from falling through
  * to here instead of failing.
  */
-export function registerTool<TArgs = unknown, O extends ToolOptions = ToolOptions>(
+export function registerTool<
+  TArgs = unknown,
+  O extends ToolOptions = ToolOptions,
+>(
   name: string,
   handler: ToolHandler<TArgs>,
   options?: O &

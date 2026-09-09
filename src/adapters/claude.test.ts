@@ -175,7 +175,9 @@ describe('claudeAdapter', () => {
         createRequest(),
       );
 
-      expect(JSON.parse(fetchMock.mock.calls[0][1].body).system).toBeUndefined();
+      expect(
+        JSON.parse(fetchMock.mock.calls[0][1].body).system,
+      ).toBeUndefined();
     });
 
     it('maps tools to input_schema', async () => {
@@ -367,7 +369,11 @@ describe('claudeAdapter', () => {
       const fetchMock = mockFetch(textResponse);
       globalThis.fetch = fetchMock;
       const rawBlocks = [
-        { type: 'thinking', thinking: 'Checking the cart.', signature: 'sig-1' },
+        {
+          type: 'thinking',
+          thinking: 'Checking the cart.',
+          signature: 'sig-1',
+        },
         { type: 'text', text: 'Adding it now.' },
         {
           type: 'tool_use',
