@@ -18,6 +18,7 @@ import { filterTools } from '../permissions/filterTools';
 import { validateToolCall } from '../permissions/validateToolCall';
 import { validateArgs } from '../tools/validateArgs';
 import { validateToolArgs } from '../tools/validateToolArgs';
+import { describeError } from '../utils/describeError';
 
 const DEFAULT_MAX_TURNS = 5;
 const ABORTED_TOOL_RESULT = 'Tool execution cancelled: interaction aborted';
@@ -95,10 +96,6 @@ class UsageTotal {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unknown error';
 }
 
 function buildStateManifest(

@@ -4,6 +4,7 @@ import type {
   StandardSchemaResult,
 } from '../types';
 import { validateArgs } from './validateArgs';
+import { describeError } from '../utils/describeError';
 
 export type ToolArgsValidation =
   | { valid: true; value: unknown }
@@ -51,8 +52,4 @@ function formatIssue(issue: StandardSchemaIssue): string {
     )
     .join('.');
   return path === '' ? issue.message : `${path}: ${issue.message}`;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

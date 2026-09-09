@@ -9,6 +9,7 @@ import type {
   TokenUsage,
 } from '../types';
 import { AdapterError } from './AdapterError';
+import { describeError } from '../utils/describeError';
 
 const DEFAULT_MODEL = 'claude-opus-5';
 const DEFAULT_MAX_TOKENS = 16000;
@@ -127,7 +128,7 @@ export function claudeAdapter(config: ClaudeAdapterConfig): ModelAdapter {
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') throw error;
         throw new AdapterError(
-          `Network error calling Anthropic API: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          `Network error calling Anthropic API: ${describeError(error)}`,
           { cause: error },
         );
       }

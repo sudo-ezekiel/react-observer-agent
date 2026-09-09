@@ -18,6 +18,8 @@ import type {
 import { AdapterError } from '../adapters/AdapterError';
 import { validateToolNames } from '../tools/validateToolNames';
 import { executeAgentLoop } from './executeAgentLoop';
+import { describeError } from '../utils/describeError';
+import { linkSignals } from '../utils/linkSignals';
 
 export const AgentContextValue = createContext<AgentContext | null>(null);
 
@@ -68,6 +70,29 @@ export function AIAgentProvider({
   // not write its transcript back over the cleared one.
   const generationRef = useRef(0);
 
+  // Aborted when the provider unmounts. An interaction that outlives the tree
+  // it belongs to keeps calling the model and can never have its onConfirm
+  // answered, since the confirmation UI is gone.
+  const unmountRef = useRef<AbortController | null>(null);
+
+  // Lazy: a child can call send() from its own mount effect, which runs before
+  // the provider's, so the controller cannot be created there.
+  const unmountController = useCallback((): AbortController => {
+    unmountRef.current ??= new AbortController();
+    return unmountRef.current;
+  }, []);
+
+  useEffect(() => {
+    // StrictMode simulates an unmount and remount on the same instance, so the
+    // controller the previous cleanup aborted has to be replaced here. Only a
+    // mount may do that: after a real unmount the aborted controller stays, and
+    // it is what a late send() reads.
+    if (unmountRef.current?.signal.aborted) unmountRef.current = null;
+
+    const controller = unmountController();
+    return () => controller.abort();
+  }, []);
+
   const clearHistory = useCallback(() => {
     generationRef.current++;
     setHistory([]);
@@ -81,6 +106,17 @@ export function AIAgentProvider({
       sendOptions?: SendOptions,
     ): Promise<AgentResponse> => {
       const generation = generationRef.current;
+      // Pinned for the whole interaction: a re-render with a new inline options
+      // object must not redirect this interaction's error to a handler it did
+      // not start with.
+      const options = optionsRef.current;
+
+      // The interaction ends when either the caller cancels or the provider
+      // goes away.
+      const abort = linkSignals(
+        sendOptions?.signal,
+        unmountController().signal,
+      );
 
       // Appended here rather than in send() so the entry lands in queue order,
       // keeping history alternating user, assistant.
@@ -100,9 +136,9 @@ export function AIAgentProvider({
           state: stateRef.current,
           tools: toolsRef.current,
           permissions: permissionsRef.current,
-          options: optionsRef.current,
+          options,
           conversationHistory: transcriptRef.current,
-          signal: sendOptions?.signal,
+          signal: abort.signal,
         });
 
         response = loop.response;
@@ -142,8 +178,7 @@ export function AIAgentProvider({
                 cause: error,
               }
             : {
-                message:
-                  error instanceof Error ? error.message : 'Unknown error',
+                message: describeError(error),
                 cause: error,
               };
 
@@ -168,6 +203,10 @@ export function AIAgentProvider({
           ]);
           setLastResponse(response);
         }
+      } finally {
+        // The caller's signal can outlive many interactions, so this one lets
+        // go of it as soon as it settles.
+        abort.release();
       }
 
       // The loop reports failures it recovered from by returning them, rather
@@ -179,12 +218,12 @@ export function AIAgentProvider({
       // second assistant entry, overwrite lastResponse and fire onError again.
       // The throw travels out of send() with the state writes already done.
       if (response.error && response.error.code !== 'ABORTED') {
-        optionsRef.current?.onError?.(response.error);
+        options?.onError?.(response.error);
       }
 
       return response;
     },
-    [],
+    [unmountController],
   );
 
   const send = useCallback(

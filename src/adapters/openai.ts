@@ -8,6 +8,7 @@ import type {
   TokenUsage,
 } from '../types';
 import { AdapterError } from './AdapterError';
+import { describeError } from '../utils/describeError';
 
 const DEFAULT_MODEL = 'gpt-4o';
 const DEFAULT_TEMPERATURE = 0.2;
@@ -102,7 +103,7 @@ export function openAIAdapter(config: OpenAIAdapterConfig): ModelAdapter {
         // would hide the AbortError name the agent loop checks for.
         if (error instanceof Error && error.name === 'AbortError') throw error;
         throw new AdapterError(
-          `Network error calling OpenAI API: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          `Network error calling OpenAI API: ${describeError(error)}`,
           { cause: error },
         );
       }
