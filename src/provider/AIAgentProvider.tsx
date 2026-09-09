@@ -84,8 +84,10 @@ export function AIAgentProvider({
 
     setHistory((prev) => [...prev, userEntry]);
 
+    let response: AgentResponse;
+
     try {
-      const { response, messages } = await executeAgentLoop(message, {
+      const loop = await executeAgentLoop(message, {
         model: modelRef.current,
         state: stateRef.current,
         tools: toolsRef.current,
@@ -95,6 +97,8 @@ export function AIAgentProvider({
         signal: sendOptions?.signal,
       });
 
+      response = loop.response;
+
       // clearHistory() during the interaction means the user asked for this
       // conversation to be gone, so nothing it produced is written back. The
       // user entry appended above went with the clear.
@@ -103,7 +107,7 @@ export function AIAgentProvider({
         // answering it. Providers reject that shape, so the partial turn is
         // dropped rather than replayed.
         if (response.error?.code !== 'ABORTED') {
-          transcriptRef.current = messages;
+          transcriptRef.current = loop.messages;
         }
 
         const assistantEntry: ConversationEntry = {
@@ -120,15 +124,6 @@ export function AIAgentProvider({
         setHistory((prev) => [...prev, assistantEntry]);
         setLastResponse(response);
       }
-
-      // The loop reports failures it recovered from by returning them, rather
-      // than throwing, so the error handler still needs to hear about them.
-      // A user-initiated cancel is not an application error.
-      if (response.error && response.error.code !== 'ABORTED') {
-        optionsRef.current?.onError?.(response.error);
-      }
-
-      return response;
     } catch (error) {
       const agentError: AgentError = error instanceof AdapterError
         ? {
@@ -141,7 +136,8 @@ export function AIAgentProvider({
             message: error instanceof Error ? error.message : 'Unknown error',
             cause: error,
           };
-      const errorResponse: AgentResponse = {
+
+      response = {
         message: '',
         toolCalls: [],
         error: agentError,
@@ -160,12 +156,23 @@ export function AIAgentProvider({
             timestamp: Date.now(),
           },
         ]);
-        setLastResponse(errorResponse);
+        setLastResponse(response);
       }
-
-      optionsRef.current?.onError?.(agentError);
-      return errorResponse;
     }
+
+    // The loop reports failures it recovered from by returning them, rather
+    // than throwing, so the error handler still needs to hear about them.
+    // A user-initiated cancel is not an application error.
+    //
+    // Reported here, past the catch, so a consumer callback that throws is not
+    // mistaken for a failure of the interaction: it would otherwise append a
+    // second assistant entry, overwrite lastResponse and fire onError again.
+    // The throw travels out of send() with the state writes already done.
+    if (response.error && response.error.code !== 'ABORTED') {
+      optionsRef.current?.onError?.(response.error);
+    }
+
+    return response;
   }, []);
 
   const send = useCallback((
