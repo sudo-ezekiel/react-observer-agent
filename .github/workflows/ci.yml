@@ -7,12 +7,13 @@ on:
 
 jobs:
   library:
-    name: Build, lint and test
+    name: Node ${{ matrix.node-version }}, React ${{ matrix.react-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node-version: [20, 22]
+        react-version: [18, 19]
     steps:
       - uses: actions/checkout@v4
 
@@ -23,14 +24,19 @@ jobs:
 
       - run: npm ci
 
+      - name: Install React 19
+        if: matrix.react-version == 19
+        run: npm install --no-save react@19 react-dom@19
+
       - run: npm run build
 
       - run: npm run lint
 
+      - run: npm run format:check
+
       - run: npm run test
 
-      # `npm run format:check` is deliberately not gated here: it fails on files
-      # that predate this workflow. Add it once the tree is Prettier clean.
+      - run: npm run check:package
 
       # Examples and docs live in sudo-ezekiel/react-observer-agent-examples and
       # are built there, against the published package.
