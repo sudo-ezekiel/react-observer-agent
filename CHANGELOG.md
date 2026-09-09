@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.3.0
+
+### Fixed
+
+- **Overlapping `send()` calls corrupted the conversation.** Two sends in flight at once both started from the same transcript, the second to finish overwrote the first's turns, and their history entries interleaved as user, user, assistant, assistant. `send()` now queues; see Changed.
+- **A malformed `__readState` call crashed the interaction.** A model that sent `keys` as a string instead of an array threw inside the loop and the whole `send()` failed. The arguments are now validated against the tool's own schema, and a bad call gets an error tool message so the model can retry.
+- **A confirmation answered after the interaction was aborted still ran the tool.** `onConfirm` can take as long as the user likes, and an approval that arrived after the signal fired executed the handler anyway. The signal is now re-checked after confirmation (and after async argument validation), and a stale approval records the call as `cancelled`.
+- **A tool result that could not be serialized was recorded twice.** The loop pushed the `toolCalls` entry and fired `onToolCall` as a success, then hit `JSON.stringify` on the way to the transcript, threw, and recorded the same call again as an error. Serialization now happens before anything is recorded, and a non-serializable result is a single `error` outcome.
+- **A tool name that passed `canExecute` but had no registered definition was denied silently.** The call landed in `toolCalls` as `denied` without firing `onToolCall`. It now reports like every other denial.
+- **An `onConfirm` handler that rejected took down the interaction.** A confirmation UI that unmounts on cancel typically rejects rather than resolves, and that rejection propagated out of the loop as an untyped failure. A rejection with an `AbortError` (or any rejection after the signal fired) now cancels the call; any other rejection is recorded as a tool `error` and the loop continues.
+- **The tools barrel (`src/tools/index.ts`) had broken relative imports.** tsup never bundled it, so nothing caught it. The package entry point never imported it either, so no published build was affected.
+
+### Added
+
+- **Standard Schema validation.** `registerTool` accepts a `schema` option holding any [Standard Schema](https://standardschema.dev) validator (Zod 3.24+, Valibot 1+, ArkType 2+). When present it replaces the built-in JSON Schema subset check, the handler receives the validated value (so defaults and transforms apply), and the handler's argument type is inferred from the schema output. `parameters` still supplies the JSON Schema the model sees. The package carries its own copy of the interface and stays dependency free.
+- **Tool handler context.** Handlers are called as `handler(args, { signal })`. `context?.signal` is the interaction's `AbortSignal`, for forwarding to `fetch` or any other long-running work. `PendingToolCall` passed to `onConfirm` carries the same `signal`, so a confirmation UI can close itself when the interaction is cancelled underneath it.
+- **`onEvent`.** An observation stream with four events: `turn_start`, `state_read`, `tool_start`, and `tool_end`. Every `tool_start` gets exactly one `tool_end`; `tool_start` carries the raw arguments and `tool_end` the validated value with the final status. `state_read` is the first consumer-facing trace of `__readState` activity.
+- **Typed error codes.** `AgentError.code` is now `AgentErrorCode`: `ABORTED`, `MAX_TURNS`, `ADAPTER_ERROR`, `TRUNCATED`, or `REFUSED`. `ADAPTER_ERROR` carries the HTTP status on `error.status`. `TRUNCATED` reports a model that hit its output token limit and `REFUSED` one that declined to answer; both keep whatever text came back in `message`.
+- **`AdapterError`.** Both built-in adapters throw it, with `status` and the raw response `body` on a non-2xx response and neither on a network failure or unparseable body. Custom adapters can throw it to get the same treatment.
+- **`maxStateBytes`.** A per-key size cap on `__readState` results. A value over the cap is replaced with `{ __truncated: true, limit, bytes, preview }` so one oversized key cannot spend the whole context window.
+- **`ConversationEntry.error`.** Assistant history entries carry the error their interaction ended with, `ABORTED` included, and an interaction that threw still gets its assistant entry (empty content, empty `toolCalls`, the error set), so history always alternates user, assistant.
+- **`TokenUsage` cache fields.** `usage.cacheReadTokens` and `usage.cacheWriteTokens` report the cached part of `promptTokens` when the provider does. `StopReason` is reported on `ModelResponse.stopReason`.
+- **Claude adapter:** prompt caching (the system prompt goes out as a `cache_control` text block, which caches tools and system together), `providerData` replay of the raw content blocks so thinking blocks and their signatures survive a round trip, `is_error` on failed tool results, `stop_reason` mapping, cache token usage, and a `cache` flag to turn caching off.
+- **OpenAI adapter:** `temperature: null` omits the field for reasoning models that reject one, `finish_reason` mapping, and `prompt_tokens_details.cached_tokens` as `cacheReadTokens`.
+- **`validateToolArgs`** is exported, for custom wiring that wants the same schema-or-parameters check the loop runs.
+- **`'use client'` banner** on both bundles, so the package imports from a Next.js App Router tree without a wrapper.
+- **CI runs on React 18 and 19**, gates on Prettier, and checks the packed tarball with publint and arethetypeswrong.
+
+### Changed
+
+- **`send()` calls run one at a time.** Concurrent calls queue in call order, each starting from the transcript the previous one left. The user history entry is appended when the queued call starts executing, so `history` always alternates user, assistant. `isProcessing` is true from the first call until the last queued one settles. Code that disabled its input while `isProcessing` keeps working; code that relied on two sends racing will now see them serialized.
+- **`clearHistory()` during an interaction discards that interaction.** When it finishes, nothing it produced lands in `history`, `lastResponse`, or the transcript. Its `send()` still resolves and `onError` still fires.
+- **Claude `promptTokens` now includes cached tokens.** Anthropic reports cache reads and writes outside `input_tokens`; `promptTokens` is now the sum of all three, so it means the same thing as OpenAI's `prompt_tokens`. Anyone charting Claude usage will see higher numbers for the same traffic. Prompt caching is on by default; pass `cache: false` to the adapter for the previous plain-string system prompt.
+- **Empty assistant messages are dropped from replay.** The loop no longer persists a final assistant message with no content, and both adapters skip one if they meet it in a transcript, since both providers reject it.
+- **`AgentError.code` is a union, not `string`.** Code that compared it to a string literal still compiles; code that assigned arbitrary strings to it will not.
+- **Tool handlers receive a second argument.** Existing one-argument handlers keep compiling and running; a handler that declares a second parameter gets the `ToolContext`.
+- **Reports carry the validated value.** `toolCalls`, `onToolCall`, `tool_end`, and the `onConfirm` prompt all receive the value validation returned rather than the raw model arguments. Without a `schema` the two are identical.
+- **Adapters throw `AdapterError` instead of `Error`.** It is still an `Error`, and messages keep their previous shape, so `catch` blocks that read `message` are unaffected.
+
 ## 0.2.0
 
 ### Fixed
