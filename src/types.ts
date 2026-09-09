@@ -3,17 +3,74 @@ export type JSONSchema = Record<string, unknown>;
 
 // --- Tool Types ---
 
+/** Passed to every tool handler as its second argument. */
+export interface ToolContext {
+  /** Aborts when the interaction is cancelled. Forward it to fetch or other long work. */
+  signal?: AbortSignal;
+}
+
+export type ToolHandler<TArgs = unknown> = (
+  args: TArgs,
+  context: ToolContext,
+) => unknown | Promise<unknown>;
+
+// --- Standard Schema ---
+
+/**
+ * A minimal copy of the Standard Schema v1 interface (standardschema.dev).
+ * The spec is meant to be copied, which keeps this package dependency free
+ * while accepting validators from Zod 3.24+, Valibot 1+ and ArkType 2+.
+ */
+export interface StandardSchemaV1<Input = unknown, Output = Input> {
+  readonly '~standard': StandardSchemaProps<Input, Output>;
+}
+
+export interface StandardSchemaProps<Input = unknown, Output = Input> {
+  readonly version: 1;
+  readonly vendor: string;
+  readonly validate: (
+    value: unknown,
+  ) => StandardSchemaResult<Output> | Promise<StandardSchemaResult<Output>>;
+  readonly types?:
+    | { readonly input: Input; readonly output: Output }
+    | undefined;
+}
+
+export type StandardSchemaResult<Output> =
+  | { readonly value: Output; readonly issues?: undefined }
+  | { readonly issues: ReadonlyArray<StandardSchemaIssue> };
+
+export interface StandardSchemaIssue {
+  readonly message: string;
+  readonly path?:
+    | ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>
+    | undefined;
+}
+
+/** The value a schema produces after validation, which transforms may reshape. */
+export type InferSchemaOutput<S extends StandardSchemaV1> = NonNullable<
+  S['~standard']['types']
+>['output'];
+
 export interface ToolOptions {
   description?: string;
   parameters?: JSONSchema;
+  /**
+   * Optional Standard Schema validator (Zod 3.24+, Valibot 1+, ArkType 2+).
+   * When present, runtime validation runs through it instead of the built-in
+   * JSON Schema subset, and the handler receives the validated value.
+   * `parameters` still supplies the JSON Schema the model sees.
+   */
+  schema?: StandardSchemaV1;
   confirm?: boolean;
 }
 
 export interface ToolDefinition<TArgs = unknown> {
   name: string;
-  handler: (args: TArgs) => unknown | Promise<unknown>;
+  handler: ToolHandler<TArgs>;
   description?: string;
   parameters?: JSONSchema;
+  schema?: StandardSchemaV1;
   confirm: boolean;
 }
 
@@ -27,11 +84,18 @@ export type AnyToolDefinition = ToolDefinition<any>;
 
 // --- Conversation Types ---
 
+export type ToolCallStatus =
+  | 'success'
+  | 'error'
+  | 'denied'
+  | 'confirmed'
+  | 'cancelled';
+
 export interface ToolCallResult {
   toolName: string;
   args: unknown;
   result: unknown;
-  status: 'success' | 'error' | 'denied' | 'confirmed' | 'cancelled';
+  status: ToolCallStatus;
 }
 
 export interface ConversationEntry {
@@ -41,12 +105,43 @@ export interface ConversationEntry {
   timestamp: number;
 }
 
+// --- Events ---
+
+/** Observation only. Emitted through `AgentOptions.onEvent` as the loop runs. */
+export type AgentEvent =
+  | { type: 'turn_start'; turn: number; maxTurns: number }
+  | { type: 'state_read'; requested: string[]; keys: string[] }
+  | { type: 'tool_start'; toolName: string; args: unknown }
+  | {
+      type: 'tool_end';
+      toolName: string;
+      args: unknown;
+      result: unknown;
+      status: ToolCallStatus;
+    };
+
 // --- Agent Response ---
+
+export type AgentErrorCode =
+  | 'ABORTED'
+  | 'MAX_TURNS'
+  | 'ADAPTER_ERROR'
+  | 'TRUNCATED'
+  | 'REFUSED';
 
 export interface AgentError {
   message: string;
-  code?: string;
+  code?: AgentErrorCode;
+  /** HTTP status when the failure came from an adapter with one. */
+  status?: number;
   cause?: unknown;
+}
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export interface AgentResponse {
@@ -54,7 +149,7 @@ export interface AgentResponse {
   toolCalls: ToolCallResult[];
   error?: AgentError;
   /** Totalled across every model call in the interaction, when the adapter reports it. */
-  usage?: { promptTokens: number; completionTokens: number };
+  usage?: TokenUsage;
 }
 
 // --- Agent Context (useAgent return type) ---
@@ -87,6 +182,10 @@ export interface ConversationMessage {
   content: string;
   toolCallId?: string;
   toolCalls?: LLMToolCall[];
+  /** Tool messages only: the result reports a failure (denied, invalid arguments, handler threw). */
+  isError?: boolean;
+  /** Opaque, adapter-owned. The loop copies it from ModelResponse and replays it verbatim. */
+  providerData?: unknown;
 }
 
 export interface LLMToolDefinition {
@@ -111,10 +210,20 @@ export interface ModelRequest {
   signal?: AbortSignal;
 }
 
+/** Why the model stopped, normalized across providers. */
+export type StopReason =
+  | 'end'
+  | 'tool_use'
+  | 'max_tokens'
+  | 'refusal'
+  | 'other';
+
 export interface ModelResponse {
   content: string | null;
   toolCalls?: LLMToolCall[];
-  usage?: { promptTokens: number; completionTokens: number };
+  usage?: TokenUsage;
+  stopReason?: StopReason;
+  providerData?: unknown;
 }
 
 export interface ModelAdapter {
@@ -134,22 +243,27 @@ export interface PendingToolCall {
   toolName: string;
   args: unknown;
   description?: string;
+  /** Aborts when the interaction is cancelled while confirmation is pending. */
+  signal?: AbortSignal;
 }
 
 export interface ToolCallEvent {
   toolName: string;
   args: unknown;
   result: unknown;
-  status: ToolCallResult['status'];
+  status: ToolCallStatus;
 }
 
 export interface AgentOptions {
   debug?: boolean;
   maxTurns?: number;
   systemPrompt?: string;
+  /** Byte ceiling per state key in a snapshot. Unset means no limit. */
+  maxStateBytes?: number;
   onError?: (error: AgentError) => void;
   onToolCall?: (call: ToolCallEvent) => void;
   onConfirm?: (call: PendingToolCall) => Promise<boolean>;
+  onEvent?: (event: AgentEvent) => void;
 }
 
 export interface AIAgentProviderProps {
@@ -167,7 +281,8 @@ export interface OpenAIAdapterConfig {
   apiKey?: string;
   model?: string;
   baseURL?: string;
-  temperature?: number;
+  /** Defaults to 0.2. Pass null to omit the field from the request. */
+  temperature?: number | null;
   headers?: Record<string, string>;
 }
 
@@ -177,5 +292,7 @@ export interface ClaudeAdapterConfig {
   baseURL?: string;
   /** Required by the Anthropic API. Defaults to 16000. */
   maxTokens?: number;
+  /** Prompt caching for tools and system prompt. Defaults to true. */
+  cache?: boolean;
   headers?: Record<string, string>;
 }

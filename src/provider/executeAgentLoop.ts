@@ -404,7 +404,7 @@ export async function executeAgentLoop(
       }
 
       try {
-        const result = await toolDef.handler(llmCall.arguments);
+        const result = await toolDef.handler(llmCall.arguments, { signal });
         const status = toolDef.confirm ? 'confirmed' : 'success';
 
         if (debug) {
