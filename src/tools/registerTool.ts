@@ -14,12 +14,18 @@ export function registerTool<S extends StandardSchemaV1>(
 ): ToolDefinition<InferSchemaOutput<S>>;
 /**
  * Without a schema the argument type is the handler's own. The conditional
- * keeps a schema whose output disagrees with that type from falling through
- * to here instead of failing.
+ * keeps an inferred schema whose output disagrees with that type from falling
+ * through to here instead of failing. `O` defaults to options without a
+ * `schema` key because an explicit type argument turns inference off, and with
+ * it the conditional: an inline schema next to an explicit type argument would
+ * leave two unchecked sources of truth for `TArgs`, so it is an excess
+ * property error. Drop the type argument and let the schema supply it. A
+ * variable typed as plain `ToolOptions` still passes, with or without an
+ * explicit type argument, since its schema output is `unknown`.
  */
 export function registerTool<
   TArgs = unknown,
-  O extends ToolOptions = ToolOptions,
+  O extends ToolOptions = Omit<ToolOptions, 'schema'>,
 >(
   name: string,
   handler: ToolHandler<TArgs>,

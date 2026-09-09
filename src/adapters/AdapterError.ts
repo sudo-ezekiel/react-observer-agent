@@ -4,6 +4,9 @@
  * without parsing the message.
  */
 export class AdapterError extends Error {
+  // Declared, not just assigned in the constructor, so the emitted typings
+  // publish the literal type the spec promises instead of `string`.
+  readonly name = 'AdapterError' as const;
   readonly status?: number;
   readonly body?: string;
 
@@ -12,7 +15,6 @@ export class AdapterError extends Error {
     options?: { status?: number; body?: string; cause?: unknown },
   ) {
     super(message);
-    this.name = 'AdapterError';
     this.status = options?.status;
     this.body = options?.body;
     if (options?.cause !== undefined) {
