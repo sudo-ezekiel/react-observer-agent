@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { registerTool } from './registerTool';
+import type { StandardSchemaV1 } from '../types';
 
 describe('registerTool', () => {
   it('returns a tool definition with correct shape', () => {
@@ -64,5 +65,22 @@ describe('registerTool', () => {
 
     const result = await tool.handler({ n: 5 });
     expect(result).toBe(10);
+  });
+
+  it('stores the schema when registered through the schema overload', () => {
+    const schema: StandardSchemaV1<{ name: string }, { name: string }> = {
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate: (value) => ({ value: value as { name: string } }),
+      },
+    };
+
+    const tool = registerTool('withSchema', (args) => args.name, {
+      description: 'Uses a schema',
+      schema,
+    });
+
+    expect(tool.schema).toBe(schema);
   });
 });
