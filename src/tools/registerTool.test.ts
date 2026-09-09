@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { registerTool } from './registerTool';
-import type { StandardSchemaV1 } from '../types';
+import type { ToolOptions, StandardSchemaV1 } from '../types';
 
 describe('registerTool', () => {
   it('returns a tool definition with correct shape', () => {
@@ -82,5 +82,38 @@ describe('registerTool', () => {
     });
 
     expect(tool.schema).toBe(schema);
+  });
+
+  it('accepts an explicit generic with a matching parameters schema', () => {
+    const tool = registerTool<{ path: string }>(
+      'deleteFile',
+      (args) => `deleted ${args.path}`,
+      { description: 'Delete a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } },
+    );
+
+    expect(tool.name).toBe('deleteFile');
+    expect(tool.handler({ path: '/tmp/a' })).toBe('deleted /tmp/a');
+    expect(tool.schema).toBeUndefined();
+  });
+
+  it('accepts a plain ToolOptions variable with no schema at runtime', () => {
+    const options: ToolOptions = { description: 'Plain options', confirm: true };
+
+    const tool = registerTool('plainOptionsTool', () => 'ok', options);
+
+    expect(tool.description).toBe('Plain options');
+    expect(tool.confirm).toBe(true);
+    expect(tool.schema).toBeUndefined();
+  });
+
+  it('runs a handler that reads the context second argument', () => {
+    const tool = registerTool('withContext', (args: { n: number }, context) => {
+      return { n: args.n, aborted: context?.signal?.aborted ?? false };
+    });
+
+    const controller = new AbortController();
+    const result = tool.handler({ n: 1 }, { signal: controller.signal });
+
+    expect(result).toEqual({ n: 1, aborted: false });
   });
 });

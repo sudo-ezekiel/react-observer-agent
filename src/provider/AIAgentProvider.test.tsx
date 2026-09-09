@@ -285,6 +285,30 @@ describe('error reporting', () => {
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0].message).toBe('network down');
   });
+
+  it('appends a user entry then an assistant entry carrying the error when the adapter throws', async () => {
+    const model: ModelAdapter = {
+      sendMessage: vi.fn().mockRejectedValue(new Error('network down')),
+    };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model, options: { onError: vi.fn() } })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await ctx!.send('hello');
+    });
+
+    expect(ctx!.history).toHaveLength(2);
+    expect(ctx!.history[0]).toMatchObject({ role: 'user', content: 'hello' });
+    expect(ctx!.history[1].role).toBe('assistant');
+    expect(ctx!.history[1].content).toBe('');
+    expect(ctx!.history[1].toolCalls).toEqual([]);
+    expect(ctx!.history[1].error?.message).toBe('network down');
+  });
 });
 
 describe('conversation replay', () => {
@@ -535,6 +559,41 @@ describe('send() queue', () => {
     });
 
     expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+  });
+
+  it('leaves history empty and lastResponse null after a send resolves following a mid-flight clearHistory', async () => {
+    const { gate, release } = createGate();
+    const sendMessage = vi.fn().mockImplementationOnce(async () => {
+      await gate;
+      return { content: 'first', toolCalls: [] };
+    });
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    let pending: Promise<AgentResponse> | undefined;
+    let response: AgentResponse | undefined;
+    await act(async () => {
+      pending = ctx!.send('first');
+    });
+
+    act(() => {
+      ctx!.clearHistory();
+    });
+
+    await act(async () => {
+      release();
+      response = await pending;
+    });
+
+    expect(response!.message).toBe('first');
+    expect(ctx!.history).toEqual([]);
+    expect(ctx!.lastResponse).toBeNull();
   });
 
   it('maps a thrown AdapterError to ADAPTER_ERROR with its status', async () => {

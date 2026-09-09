@@ -1142,7 +1142,9 @@ describe('executeAgentLoop tool execution', () => {
     });
 
     expect(handler).toHaveBeenCalledOnce();
-    expect(handler.mock.calls[0][1]).toEqual({ signal: controller.signal });
+    const context = handler.mock.calls[0][1];
+    expect(Object.keys(context)).toEqual(['signal']);
+    expect(context.signal).toBe(controller.signal);
   });
 
   it('passes the signal to onConfirm', async () => {
@@ -1163,12 +1165,14 @@ describe('executeAgentLoop tool execution', () => {
       signal: controller.signal,
     });
 
-    expect(onConfirm).toHaveBeenCalledWith({
+    expect(onConfirm).toHaveBeenCalledOnce();
+    const pending = onConfirm.mock.calls[0][0];
+    expect(pending).toMatchObject({
       toolName: 'clearCart',
       args: {},
       description: 'Clear all cart items',
-      signal: controller.signal,
     });
+    expect(pending.signal).toBe(controller.signal);
   });
 
   it('does not run the handler when the signal aborts while confirmation is pending', async () => {
@@ -1349,6 +1353,214 @@ describe('executeAgentLoop tool execution', () => {
     expect(handler).not.toHaveBeenCalled();
     expect(result.toolCalls[0].status).toBe('error');
     expect(result.toolCalls[0].result).toContain('name: expected a string');
+  });
+
+  it('records onConfirm rejecting with an AbortError after abort as cancelled, not an error', async () => {
+    const controller = new AbortController();
+    const handler = vi.fn(() => ({ cleared: true }));
+    const onConfirm = vi.fn(async () => {
+      // The confirmation surface unmounts on cancel and its promise rejects.
+      controller.abort();
+      const abortError = new Error('The operation was aborted');
+      abortError.name = 'AbortError';
+      throw abortError;
+    });
+    const adapter = mockAdapter({
+      content: null,
+      toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+    });
+    const events: AgentEvent[] = [];
+
+    const { response, messages } = await executeAgentLoop('clear it', {
+      model: adapter,
+      state: {},
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      options: { onConfirm, onEvent: (e) => events.push(e) },
+      conversationHistory: [],
+      signal: controller.signal,
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(response.error?.code).toBe('ABORTED');
+    expect(response.toolCalls).toHaveLength(1);
+    expect(response.toolCalls[0].status).toBe('cancelled');
+    expect(response.toolCalls[0].result).toBe(
+      'Tool execution cancelled: interaction aborted',
+    );
+    expect(events.filter((e) => e.type === 'tool_end')).toHaveLength(1);
+
+    const toolMessage = messages.find((m) => m.role === 'tool');
+    expect(JSON.parse(toolMessage!.content)).toEqual({
+      status: 'cancelled',
+      reason: 'Interaction aborted',
+    });
+    expect(toolMessage!.isError).toBeUndefined();
+  });
+
+  it('records onConfirm rejecting with a plain error as a tool error and continues the loop', async () => {
+    const onConfirm = vi.fn().mockRejectedValue(new Error('confirmation UI crashed'));
+    const adapter = mockAdapter(
+      { content: null, toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }] },
+      { content: 'Handled it.' },
+    );
+
+    const result = await runLoop('clear it', {
+      model: adapter,
+      state: {},
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      options: { onConfirm },
+      conversationHistory: [],
+    });
+
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0].status).toBe('error');
+    expect(result.toolCalls[0].result).toBe('confirmation UI crashed');
+    expect(result.message).toBe('Handled it.');
+    expect(result.error).toBeUndefined();
+  });
+
+  it('propagates a throwing onToolCall callback without recording the call twice', async () => {
+    const onToolCall = vi.fn(() => {
+      throw new Error('callback exploded');
+    });
+    const handler = vi.fn(() => ({ ok: true }));
+    const adapter = mockAdapter({
+      content: null,
+      toolCalls: [{ id: 'c1', name: 'ping', arguments: {} }],
+    });
+
+    await expect(
+      executeAgentLoop('ping', {
+        model: adapter,
+        state: {},
+        tools: [registerTool('ping', handler, { description: 'Ping' })],
+        permissions: { canAccess: [], canExecute: ['ping'] },
+        options: { onToolCall },
+        conversationHistory: [],
+      }),
+    ).rejects.toThrow('callback exploded');
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(onToolCall).toHaveBeenCalledOnce();
+  });
+
+  it('cancels when the abort lands during an async schema validate', async () => {
+    const controller = new AbortController();
+    const handler = vi.fn();
+    const schema: StandardSchemaV1<{ name: string }, { name: string }> = {
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate: async (value) => {
+          // The interaction is cancelled while validation is still pending.
+          controller.abort();
+          return { value: value as { name: string } };
+        },
+      },
+    };
+    const adapter = mockAdapter({
+      content: null,
+      toolCalls: [{ id: 'c1', name: 'rename', arguments: { name: 'ada' } }],
+    });
+
+    const { response, messages } = await executeAgentLoop('rename it', {
+      model: adapter,
+      state: {},
+      tools: [registerTool('rename', handler, { description: 'Rename', schema })],
+      permissions: { canAccess: [], canExecute: ['rename'] },
+      conversationHistory: [],
+      signal: controller.signal,
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(response.error?.code).toBe('ABORTED');
+    expect(response.toolCalls).toHaveLength(1);
+    expect(response.toolCalls[0].status).toBe('cancelled');
+
+    const toolMessage = messages.find((m) => m.role === 'tool');
+    expect(JSON.parse(toolMessage!.content)).toEqual({
+      status: 'cancelled',
+      reason: 'Interaction aborted',
+    });
+  });
+
+  it('carries the transformed value through toolCalls, onToolCall and tool_end, and the raw value through tool_start', async () => {
+    const schema: StandardSchemaV1<{ name: string }, { name: string }> = {
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate: (value) => {
+          const input = value as { name: string };
+          return { value: { name: input.name.toUpperCase() } };
+        },
+      },
+    };
+    const handler = vi.fn((args: { name: string }) => ({ renamed: args.name }));
+    const onToolCall = vi.fn();
+    const events: AgentEvent[] = [];
+    const adapter = mockAdapter(
+      { content: null, toolCalls: [{ id: 'c1', name: 'rename', arguments: { name: 'ada' } }] },
+      { content: 'Renamed.' },
+    );
+
+    const result = await runLoop('rename it', {
+      model: adapter,
+      state: {},
+      tools: [registerTool('rename', handler, { description: 'Rename', schema })],
+      permissions: { canAccess: [], canExecute: ['rename'] },
+      options: { onToolCall, onEvent: (e) => events.push(e) },
+      conversationHistory: [],
+    });
+
+    expect(result.toolCalls[0].args).toEqual({ name: 'ADA' });
+    expect(onToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({ args: { name: 'ADA' } }),
+    );
+
+    const toolStart = events.find((e) => e.type === 'tool_start');
+    const toolEnd = events.find((e) => e.type === 'tool_end');
+    expect(toolStart).toMatchObject({ args: { name: 'ada' } });
+    expect(toolEnd).toMatchObject({ args: { name: 'ADA' } });
+  });
+
+  it('cancels when the handler rejects with an AbortError after the signal aborts', async () => {
+    const controller = new AbortController();
+    const handler = vi.fn(async () => {
+      // The handler forwarded the signal and its own work rejected on cancel.
+      controller.abort();
+      const abortError = new Error('The operation was aborted');
+      abortError.name = 'AbortError';
+      throw abortError;
+    });
+    const adapter = mockAdapter({
+      content: null,
+      toolCalls: [{ id: 'c1', name: 'ping', arguments: {} }],
+    });
+
+    const { response, messages } = await executeAgentLoop('ping', {
+      model: adapter,
+      state: {},
+      tools: [registerTool('ping', handler, { description: 'Ping' })],
+      permissions: { canAccess: [], canExecute: ['ping'] },
+      conversationHistory: [],
+      signal: controller.signal,
+    });
+
+    expect(response.error?.code).toBe('ABORTED');
+    expect(response.toolCalls).toHaveLength(1);
+    expect(response.toolCalls[0].status).toBe('cancelled');
+    expect(response.toolCalls[0].result).toBe(
+      'Tool execution cancelled: interaction aborted',
+    );
+
+    const toolMessage = messages.find((m) => m.role === 'tool');
+    expect(JSON.parse(toolMessage!.content)).toEqual({
+      status: 'cancelled',
+      reason: 'Interaction aborted',
+    });
+    expect(toolMessage!.isError).toBeUndefined();
   });
 });
 
