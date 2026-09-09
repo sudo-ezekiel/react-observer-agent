@@ -569,7 +569,7 @@ describe('claudeAdapter', () => {
       }).sendMessage(createRequest());
 
       expect(response.usage).toEqual({
-        promptTokens: 10,
+        promptTokens: 1030,
         completionTokens: 5,
         cacheReadTokens: 900,
         cacheWriteTokens: 120,

@@ -95,22 +95,31 @@ export function AIAgentProvider({
         signal: sendOptions?.signal,
       });
 
-      // An abort can land between an assistant message and the tool results
-      // answering it. Providers reject that shape, so the partial turn is
-      // dropped rather than replayed.
-      if (response.error?.code !== 'ABORTED' && generation === generationRef.current) {
-        transcriptRef.current = messages;
+      // clearHistory() during the interaction means the user asked for this
+      // conversation to be gone, so nothing it produced is written back. The
+      // user entry appended above went with the clear.
+      if (generation === generationRef.current) {
+        // An abort can land between an assistant message and the tool results
+        // answering it. Providers reject that shape, so the partial turn is
+        // dropped rather than replayed.
+        if (response.error?.code !== 'ABORTED') {
+          transcriptRef.current = messages;
+        }
+
+        const assistantEntry: ConversationEntry = {
+          role: 'assistant',
+          content: response.message,
+          toolCalls: response.toolCalls,
+          timestamp: Date.now(),
+        };
+
+        if (response.error) {
+          assistantEntry.error = response.error;
+        }
+
+        setHistory((prev) => [...prev, assistantEntry]);
+        setLastResponse(response);
       }
-
-      const assistantEntry: ConversationEntry = {
-        role: 'assistant',
-        content: response.message,
-        toolCalls: response.toolCalls,
-        timestamp: Date.now(),
-      };
-
-      setHistory((prev) => [...prev, assistantEntry]);
-      setLastResponse(response);
 
       // The loop reports failures it recovered from by returning them, rather
       // than throwing, so the error handler still needs to hear about them.
@@ -137,7 +146,23 @@ export function AIAgentProvider({
         toolCalls: [],
         error: agentError,
       };
-      setLastResponse(errorResponse);
+
+      // The interaction still started, so it still gets its assistant entry
+      // and history keeps alternating user, assistant.
+      if (generation === generationRef.current) {
+        setHistory((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: [],
+            error: agentError,
+            timestamp: Date.now(),
+          },
+        ]);
+        setLastResponse(errorResponse);
+      }
+
       optionsRef.current?.onError?.(agentError);
       return errorResponse;
     }

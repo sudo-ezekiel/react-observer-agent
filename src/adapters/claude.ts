@@ -276,15 +276,20 @@ function parseResponse(data: unknown): ModelResponse {
 }
 
 function toTokenUsage(usage: AnthropicUsage): TokenUsage {
+  const cacheRead = usage.cache_read_input_tokens;
+  const cacheWrite = usage.cache_creation_input_tokens;
+
   const result: TokenUsage = {
-    promptTokens: usage.input_tokens,
+    // Anthropic reports the cached tokens outside input_tokens, so the total
+    // input for the call is the three fields added together.
+    promptTokens: usage.input_tokens + (cacheRead ?? 0) + (cacheWrite ?? 0),
     completionTokens: usage.output_tokens,
   };
-  if (typeof usage.cache_read_input_tokens === 'number') {
-    result.cacheReadTokens = usage.cache_read_input_tokens;
+  if (typeof cacheRead === 'number') {
+    result.cacheReadTokens = cacheRead;
   }
-  if (typeof usage.cache_creation_input_tokens === 'number') {
-    result.cacheWriteTokens = usage.cache_creation_input_tokens;
+  if (typeof cacheWrite === 'number') {
+    result.cacheWriteTokens = cacheWrite;
   }
   return result;
 }

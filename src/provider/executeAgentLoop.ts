@@ -20,6 +20,7 @@ import { validateArgs } from '../tools/validateArgs';
 import { validateToolArgs } from '../tools/validateToolArgs';
 
 const DEFAULT_MAX_TURNS = 5;
+const ABORTED_TOOL_RESULT = 'Tool execution cancelled: interaction aborted';
 const READ_STATE_TOOL_NAME = '__readState';
 const EMPTY_OBJECT_SCHEMA: JSONSchema = { type: 'object', properties: {} };
 const READ_STATE_SCHEMA: JSONSchema = {
@@ -33,6 +34,12 @@ const READ_STATE_SCHEMA: JSONSchema = {
   },
   required: ['keys'],
 };
+
+/** What a handler invocation produced, reported once after the try/catch. */
+type ToolCallOutcome =
+  | { kind: 'success'; result: unknown; content: string }
+  | { kind: 'error'; message: string }
+  | { kind: 'cancelled' };
 
 interface ExecutionContext {
   model: ModelAdapter;
@@ -224,6 +231,29 @@ export async function executeAgentLoop(
     },
     messages,
   });
+
+  /**
+   * Cancels the call in flight and ends the interaction, so an abort that lands
+   * mid-call still leaves exactly one report per tool_start.
+   */
+  const cancelForAbort = (
+    toolName: string,
+    args: unknown,
+    toolCallId: string,
+  ): AgentLoopResult => {
+    record({
+      toolName,
+      args,
+      result: ABORTED_TOOL_RESULT,
+      status: 'cancelled',
+    });
+    messages.push({
+      role: 'tool',
+      content: JSON.stringify({ status: 'cancelled', reason: 'Interaction aborted' }),
+      toolCallId,
+    });
+    return abortedResult();
+  };
 
   while (turns < maxTurns) {
     if (signal?.aborted) return abortedResult();
@@ -430,8 +460,14 @@ export async function executeAgentLoop(
       }
 
       // A schema may apply defaults or transforms, so this is what the user
-      // confirms and what the handler runs on.
+      // confirms, what the handler runs on, and what every later report shows.
       const value = validation.value;
+
+      // Validation can await a schema, so the interaction may have been
+      // cancelled while it ran.
+      if (signal?.aborted) {
+        return cancelForAbort(llmCall.name, value, llmCall.id);
+      }
 
       if (toolDef.confirm) {
         if (!options?.onConfirm) {
@@ -442,7 +478,7 @@ export async function executeAgentLoop(
           }
           record({
             toolName: llmCall.name,
-            args: llmCall.arguments,
+            args: value,
             result: 'Tool execution cancelled: no confirmation handler provided',
             status: 'cancelled',
           });
@@ -454,34 +490,47 @@ export async function executeAgentLoop(
           continue;
         }
 
-        const confirmed = await options.onConfirm({
-          toolName: llmCall.name,
-          args: value,
-          description: toolDef.description,
-          signal,
-        });
+        let confirmed: boolean;
+        try {
+          confirmed = await options.onConfirm({
+            toolName: llmCall.name,
+            args: value,
+            description: toolDef.description,
+            signal,
+          });
+        } catch (error) {
+          // A confirmation UI that unmounts on cancel rejects rather than
+          // answering, which is a cancel and not a tool failure.
+          if (isAbortError(error) || signal?.aborted) {
+            return cancelForAbort(llmCall.name, value, llmCall.id);
+          }
+
+          const errorMessage = describeError(error);
+          record({
+            toolName: llmCall.name,
+            args: value,
+            result: errorMessage,
+            status: 'error',
+          });
+          messages.push({
+            role: 'tool',
+            content: JSON.stringify({ error: errorMessage }),
+            toolCallId: llmCall.id,
+            isError: true,
+          });
+          continue;
+        }
 
         // Confirmation can take arbitrarily long, so the answer may arrive
         // after the interaction was cancelled. It is stale either way.
         if (signal?.aborted) {
-          record({
-            toolName: llmCall.name,
-            args: llmCall.arguments,
-            result: 'Tool execution cancelled: interaction aborted',
-            status: 'cancelled',
-          });
-          messages.push({
-            role: 'tool',
-            content: JSON.stringify({ status: 'cancelled', reason: 'Interaction aborted' }),
-            toolCallId: llmCall.id,
-          });
-          return abortedResult();
+          return cancelForAbort(llmCall.name, value, llmCall.id);
         }
 
         if (!confirmed) {
           record({
             toolName: llmCall.name,
-            args: llmCall.arguments,
+            args: value,
             result: 'Tool execution cancelled by user',
             status: 'cancelled',
           });
@@ -494,13 +543,12 @@ export async function executeAgentLoop(
         }
       }
 
+      // Only the handler and the serialization run inside the try. Reporting
+      // happens after it, so a throwing callback cannot trigger a second
+      // report through the catch.
+      let outcome: ToolCallOutcome;
       try {
         const result = await toolDef.handler(value, { signal });
-        const status = toolDef.confirm ? 'confirmed' : 'success';
-
-        if (debug) {
-          console.log(`[react-observer-agent] Tool "${llmCall.name}" executed:`, { status, result });
-        }
 
         // Serialized before anything is recorded: a result the transcript
         // cannot carry is a failed call, not a success with a missing message.
@@ -511,32 +559,56 @@ export async function executeAgentLoop(
           throw new Error(`Tool result is not serializable: ${describeError(error)}`);
         }
 
-        record({
-          toolName: llmCall.name,
-          args: llmCall.arguments,
-          result,
-          status,
-        });
-        messages.push({
-          role: 'tool',
-          content,
-          toolCallId: llmCall.id,
-        });
+        outcome = { kind: 'success', result, content };
       } catch (error) {
-        const errorMessage = describeError(error);
+        // A handler that forwarded the signal rejects on cancel, which is the
+        // interaction ending rather than the tool failing.
+        outcome =
+          isAbortError(error) && signal?.aborted
+            ? { kind: 'cancelled' }
+            : { kind: 'error', message: describeError(error) };
+      }
+
+      if (outcome.kind === 'cancelled') {
+        return cancelForAbort(llmCall.name, value, llmCall.id);
+      }
+
+      if (outcome.kind === 'error') {
         record({
           toolName: llmCall.name,
-          args: llmCall.arguments,
-          result: errorMessage,
+          args: value,
+          result: outcome.message,
           status: 'error',
         });
         messages.push({
           role: 'tool',
-          content: JSON.stringify({ error: errorMessage }),
+          content: JSON.stringify({ error: outcome.message }),
           toolCallId: llmCall.id,
           isError: true,
         });
+        continue;
       }
+
+      const status = toolDef.confirm ? 'confirmed' : 'success';
+
+      if (debug) {
+        console.log(`[react-observer-agent] Tool "${llmCall.name}" executed:`, {
+          status,
+          result: outcome.result,
+        });
+      }
+
+      record({
+        toolName: llmCall.name,
+        args: value,
+        result: outcome.result,
+        status,
+      });
+      messages.push({
+        role: 'tool',
+        content: outcome.content,
+        toolCallId: llmCall.id,
+      });
     }
 
     // The next turn carries the tool results back to the model.
