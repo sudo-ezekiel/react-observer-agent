@@ -1,6 +1,6 @@
 {
   "name": "react-observer-agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A React library that enables AI agents to observe application state, understand user context, and execute pre-defined actions through a declarative provider pattern.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -29,7 +29,9 @@
     "format:check": "prettier --check 'src/**/*.{ts,tsx}'",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build && npm run lint && npm run test"
+    "prepublishOnly": "npm run build && npm run lint && npm run test",
+    "test:coverage": "vitest run --coverage",
+    "check:package": "publint && attw --pack ."
   },
   "peerDependencies": {
     "react": ">=18.0.0"
