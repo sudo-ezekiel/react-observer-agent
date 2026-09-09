@@ -4,6 +4,7 @@ import React from 'react';
 import { AIAgentProvider } from './AIAgentProvider';
 import { useAgent } from './useAgent';
 import { registerTool } from '../tools/registerTool';
+import { AdapterError } from '../adapters/AdapterError';
 import type { AgentResponse, ModelAdapter, ModelResponse, PermissionsConfig, ToolDefinition } from '../types';
 
 function createMockAdapter(response?: Partial<ModelResponse>): ModelAdapter {
@@ -416,6 +417,151 @@ describe('conversation replay', () => {
     });
 
     expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+  });
+});
+
+describe('send() queue', () => {
+  function sentMessages(model: ModelAdapter, callIndex: number) {
+    return (model.sendMessage as ReturnType<typeof vi.fn>).mock.calls[callIndex][0].messages;
+  }
+
+  function createGate() {
+    let resolveGate = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      resolveGate = () => resolve();
+    });
+    return { gate, release: () => resolveGate() };
+  }
+
+  it('runs overlapping sends one at a time, each starting from the finished transcript', async () => {
+    const model = createMockAdapter({ content: 'ok' });
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      await Promise.all([ctx!.send('one'), ctx!.send('two')]);
+    });
+    await act(async () => {
+      await ctx!.send('three');
+    });
+
+    expect(sentMessages(model, 0)).toHaveLength(1);
+    expect(sentMessages(model, 1)).toHaveLength(3);
+    expect(sentMessages(model, 2)).toHaveLength(5);
+    expect(ctx!.history.map((entry) => entry.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+  });
+
+  it('keeps isProcessing true until the last queued send settles', async () => {
+    const { gate, release } = createGate();
+    const sendMessage = vi
+      .fn()
+      .mockImplementationOnce(async () => ({ content: 'first', toolCalls: [] }))
+      .mockImplementationOnce(async () => {
+        await gate;
+        return { content: 'second', toolCalls: [] };
+      });
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    let first: Promise<AgentResponse> | undefined;
+    let second: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      first = ctx!.send('one');
+      second = ctx!.send('two');
+      await first;
+    });
+
+    expect(ctx!.isProcessing).toBe(true);
+
+    await act(async () => {
+      release();
+      await second;
+    });
+
+    expect(ctx!.isProcessing).toBe(false);
+  });
+
+  it('does not resurrect the transcript when clearHistory lands mid interaction', async () => {
+    const { gate, release } = createGate();
+    const sendMessage = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        await gate;
+        return { content: 'first', toolCalls: [] };
+      })
+      .mockImplementationOnce(async () => ({ content: 'second', toolCalls: [] }));
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    let pending: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      pending = ctx!.send('first');
+    });
+
+    act(() => {
+      ctx!.clearHistory();
+    });
+
+    await act(async () => {
+      release();
+      await pending;
+    });
+    await act(async () => {
+      await ctx!.send('second');
+    });
+
+    expect(sentMessages(model, 1)).toEqual([{ role: 'user', content: 'second' }]);
+  });
+
+  it('maps a thrown AdapterError to ADAPTER_ERROR with its status', async () => {
+    const onError = vi.fn();
+    const model: ModelAdapter = {
+      sendMessage: vi
+        .fn()
+        .mockRejectedValue(new AdapterError('Claude API error: 401', { status: 401 })),
+    };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model, options: { onError } })}>
+        <TestConsumer onContext={(c) => { ctx = c; }} />
+      </AIAgentProvider>,
+    );
+
+    let response: AgentResponse | undefined;
+    await act(async () => {
+      response = await ctx!.send('hello');
+    });
+
+    expect(response!.error?.code).toBe('ADAPTER_ERROR');
+    expect(response!.error?.status).toBe(401);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0].code).toBe('ADAPTER_ERROR');
+    expect(onError.mock.calls[0][0].status).toBe(401);
   });
 });
 

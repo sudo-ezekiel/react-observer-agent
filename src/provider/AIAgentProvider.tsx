@@ -1,16 +1,20 @@
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentContext,
+  AgentError,
   AgentResponse,
   AIAgentProviderProps,
   ConversationEntry,
   ConversationMessage,
   SendOptions,
 } from '../types';
+import { AdapterError } from '../adapters/AdapterError';
 import { validateToolNames } from '../tools/validateToolNames';
 import { executeAgentLoop } from './executeAgentLoop';
 
 export const AgentContextValue = createContext<AgentContext | null>(null);
+
+const noop = (): void => {};
 
 export function AIAgentProvider({
   model,
@@ -45,18 +49,33 @@ export function AIAgentProvider({
   // structured tool calls survive across interactions.
   const transcriptRef = useRef<ConversationMessage[]>([]);
 
+  // Tail of the interaction queue. Overlapping send() calls would otherwise
+  // start from the same transcript and interleave their history entries.
+  const queueRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  // Calls that have been made but not settled. isProcessing is derived from it
+  // so it does not flicker false between two queued interactions.
+  const pendingRef = useRef(0);
+
+  // Bumped by clearHistory. An interaction that started before the reset must
+  // not write its transcript back over the cleared one.
+  const generationRef = useRef(0);
+
   const clearHistory = useCallback(() => {
+    generationRef.current++;
     setHistory([]);
     setLastResponse(null);
     transcriptRef.current = [];
   }, []);
 
-  const send = useCallback(async (
+  const runInteraction = useCallback(async (
     message: string,
     sendOptions?: SendOptions,
   ): Promise<AgentResponse> => {
-    setIsProcessing(true);
+    const generation = generationRef.current;
 
+    // Appended here rather than in send() so the entry lands in queue order,
+    // keeping history alternating user, assistant.
     const userEntry: ConversationEntry = {
       role: 'user',
       content: message,
@@ -79,7 +98,7 @@ export function AIAgentProvider({
       // An abort can land between an assistant message and the tool results
       // answering it. Providers reject that shape, so the partial turn is
       // dropped rather than replayed.
-      if (response.error?.code !== 'ABORTED') {
+      if (response.error?.code !== 'ABORTED' && generation === generationRef.current) {
         transcriptRef.current = messages;
       }
 
@@ -102,10 +121,17 @@ export function AIAgentProvider({
 
       return response;
     } catch (error) {
-      const agentError = {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        cause: error,
-      };
+      const agentError: AgentError = error instanceof AdapterError
+        ? {
+            message: error.message,
+            code: 'ADAPTER_ERROR',
+            status: error.status,
+            cause: error,
+          }
+        : {
+            message: error instanceof Error ? error.message : 'Unknown error',
+            cause: error,
+          };
       const errorResponse: AgentResponse = {
         message: '',
         toolCalls: [],
@@ -114,10 +140,26 @@ export function AIAgentProvider({
       setLastResponse(errorResponse);
       optionsRef.current?.onError?.(agentError);
       return errorResponse;
-    } finally {
-      setIsProcessing(false);
     }
   }, []);
+
+  const send = useCallback((
+    message: string,
+    sendOptions?: SendOptions,
+  ): Promise<AgentResponse> => {
+    pendingRef.current++;
+    setIsProcessing(pendingRef.current > 0);
+
+    const interaction = queueRef.current.then(() => runInteraction(message, sendOptions));
+    // The tail swallows failures so one broken interaction cannot stall every
+    // call queued behind it. The caller still sees what `interaction` settles with.
+    queueRef.current = interaction.then(noop, noop);
+
+    return interaction.finally(() => {
+      pendingRef.current--;
+      setIsProcessing(pendingRef.current > 0);
+    });
+  }, [runInteraction]);
 
   const contextValue = useMemo<AgentContext>(
     () => ({

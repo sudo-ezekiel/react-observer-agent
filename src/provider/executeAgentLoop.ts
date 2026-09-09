@@ -1,4 +1,6 @@
 import type {
+  AgentError,
+  AgentEvent,
   AgentOptions,
   AgentResponse,
   AnyToolDefinition,
@@ -8,16 +10,29 @@ import type {
   ModelAdapter,
   PermissionsConfig,
   StateSource,
+  TokenUsage,
   ToolCallResult,
 } from '../types';
 import { createStateSnapshot } from '../state/createStateSnapshot';
 import { filterTools } from '../permissions/filterTools';
 import { validateToolCall } from '../permissions/validateToolCall';
 import { validateArgs } from '../tools/validateArgs';
+import { validateToolArgs } from '../tools/validateToolArgs';
 
 const DEFAULT_MAX_TURNS = 5;
 const READ_STATE_TOOL_NAME = '__readState';
 const EMPTY_OBJECT_SCHEMA: JSONSchema = { type: 'object', properties: {} };
+const READ_STATE_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    keys: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'State keys to read',
+    },
+  },
+  required: ['keys'],
+};
 
 interface ExecutionContext {
   model: ModelAdapter;
@@ -43,27 +58,39 @@ export interface AgentLoopResult {
 class UsageTotal {
   private promptTokens = 0;
   private completionTokens = 0;
+  private cacheReadTokens = 0;
+  private cacheWriteTokens = 0;
   private reported = false;
 
-  add(usage?: { promptTokens: number; completionTokens: number }): void {
+  add(usage?: TokenUsage): void {
     if (!usage) return;
     this.reported = true;
     this.promptTokens += usage.promptTokens ?? 0;
     this.completionTokens += usage.completionTokens ?? 0;
+    this.cacheReadTokens += usage.cacheReadTokens ?? 0;
+    this.cacheWriteTokens += usage.cacheWriteTokens ?? 0;
   }
 
   /** Undefined when no adapter response carried usage, rather than a false zero. */
-  total(): { promptTokens: number; completionTokens: number } | undefined {
+  total(): TokenUsage | undefined {
     if (!this.reported) return undefined;
-    return {
+    const total: TokenUsage = {
       promptTokens: this.promptTokens,
       completionTokens: this.completionTokens,
     };
+    // Only providers with a cache report these, so a zero would be a claim.
+    if (this.cacheReadTokens > 0) total.cacheReadTokens = this.cacheReadTokens;
+    if (this.cacheWriteTokens > 0) total.cacheWriteTokens = this.cacheWriteTokens;
+    return total;
   }
 }
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error';
 }
 
 function buildStateManifest(
@@ -91,17 +118,7 @@ function buildReadStateToolDef(): LLMToolDefinition {
   return {
     name: READ_STATE_TOOL_NAME,
     description: 'Read specific keys from the application state. Only request keys you need.',
-    parameters: {
-      type: 'object',
-      properties: {
-        keys: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'State keys to read',
-        },
-      },
-      required: ['keys'],
-    },
+    parameters: READ_STATE_SCHEMA,
   };
 }
 
@@ -169,7 +186,34 @@ export async function executeAgentLoop(
   const usage = new UsageTotal();
   let turns = 0;
   let finalMessage = '';
+  let finalProviderData: unknown;
+  let stopError: AgentError | undefined;
   let completed = false;
+
+  const emit = (event: AgentEvent): void => {
+    options?.onEvent?.(event);
+  };
+
+  /**
+   * The single place a user tool call is reported, so every call produces
+   * exactly one entry, one callback, and one tool_end.
+   */
+  const record = (result: ToolCallResult): void => {
+    allToolCalls.push(result);
+    options?.onToolCall?.({
+      toolName: result.toolName,
+      args: result.args,
+      result: result.result,
+      status: result.status,
+    });
+    emit({
+      type: 'tool_end',
+      toolName: result.toolName,
+      args: result.args,
+      result: result.result,
+      status: result.status,
+    });
+  };
 
   const abortedResult = (): AgentLoopResult => ({
     response: {
@@ -210,6 +254,8 @@ export async function executeAgentLoop(
       });
     }
 
+    emit({ type: 'turn_start', turn: turns, maxTurns });
+
     let modelResponse;
     try {
       modelResponse = await model.sendMessage(modelRequest);
@@ -235,6 +281,22 @@ export async function executeAgentLoop(
     // Nothing left to run, so this is the answer.
     if (!modelResponse.toolCalls || modelResponse.toolCalls.length === 0) {
       finalMessage = modelResponse.content ?? '';
+      finalProviderData = modelResponse.providerData;
+
+      // A cut-off or refused answer is still the answer, but the caller has to
+      // be able to tell it apart from a complete one.
+      if (modelResponse.stopReason === 'max_tokens') {
+        stopError = {
+          message: 'Model output was cut off by the max tokens limit',
+          code: 'TRUNCATED',
+        };
+      } else if (modelResponse.stopReason === 'refusal') {
+        stopError = {
+          message: 'Model declined to answer',
+          code: 'REFUSED',
+        };
+      }
+
       completed = true;
       break;
     }
@@ -243,6 +305,7 @@ export async function executeAgentLoop(
       role: 'assistant',
       content: modelResponse.content ?? '',
       toolCalls: modelResponse.toolCalls,
+      providerData: modelResponse.providerData,
     });
 
     for (const llmCall of modelResponse.toolCalls) {
@@ -250,17 +313,45 @@ export async function executeAgentLoop(
       if (signal?.aborted) return abortedResult();
 
       if (llmCall.name === READ_STATE_TOOL_NAME) {
-        const args = llmCall.arguments as { keys?: string[] };
-        const requestedKeys = args?.keys ?? [];
+        // Validated against the schema the tool advertises, since a model that
+        // sends `keys` as a string would otherwise crash the loop.
+        const readValidation = validateArgs(llmCall.arguments, READ_STATE_SCHEMA);
+        if (!readValidation.valid) {
+          const errorMessage = `Invalid arguments for ${READ_STATE_TOOL_NAME}: ${readValidation.errors.join('; ')}`;
+
+          if (debug) {
+            console.warn(`[react-observer-agent] ${errorMessage}`);
+          }
+
+          messages.push({
+            role: 'tool',
+            content: JSON.stringify({ error: errorMessage }),
+            toolCallId: llmCall.id,
+            isError: true,
+          });
+          continue;
+        }
+
+        const args = llmCall.arguments as { keys?: unknown[] };
+        const requestedKeys = (args?.keys ?? []).filter(
+          (k): k is string => typeof k === 'string',
+        );
 
         const allowedKeys = requestedKeys.filter((k) => permissions.canAccess.includes(k));
-        const snapshot = createStateSnapshot(state, allowedKeys, debug);
+        const snapshot = createStateSnapshot(
+          state,
+          allowedKeys,
+          debug,
+          options?.maxStateBytes,
+        );
 
         if (debug) {
           console.log('[react-observer-agent] readState requested:', requestedKeys);
           console.log('[react-observer-agent] readState allowed:', allowedKeys);
           console.log('[react-observer-agent] readState result:', snapshot);
         }
+
+        emit({ type: 'state_read', requested: requestedKeys, keys: allowedKeys });
 
         messages.push({
           role: 'tool',
@@ -271,6 +362,10 @@ export async function executeAgentLoop(
         continue;
       }
 
+      // Fired before the permission check so that a denied call is as visible
+      // as an executed one, and every start has a matching end.
+      emit({ type: 'tool_start', toolName: llmCall.name, args: llmCall.arguments });
+
       // Re-checked after the model answered, so a hallucinated or injected
       // name is rejected even though it was never advertised.
       if (!validateToolCall(llmCall.name, permissions.canExecute)) {
@@ -280,18 +375,13 @@ export async function executeAgentLoop(
           result: `Tool "${llmCall.name}" is not permitted`,
           status: 'denied',
         };
-        allToolCalls.push(deniedResult);
-        options?.onToolCall?.({
-          toolName: llmCall.name,
-          args: llmCall.arguments,
-          result: deniedResult.result,
-          status: 'denied',
-        });
+        record(deniedResult);
 
         messages.push({
           role: 'tool',
           content: JSON.stringify({ error: deniedResult.result }),
           toolCallId: llmCall.id,
+          isError: true,
         });
         continue;
       }
@@ -304,47 +394,44 @@ export async function executeAgentLoop(
           result: `Tool "${llmCall.name}" not found`,
           status: 'denied',
         };
-        allToolCalls.push(deniedResult);
+        record(deniedResult);
         messages.push({
           role: 'tool',
           content: JSON.stringify({ error: deniedResult.result }),
           toolCallId: llmCall.id,
+          isError: true,
         });
         continue;
       }
 
       // Validated before anything acts on the arguments, so the user is never
       // asked to confirm a malformed call.
-      if (toolDef.parameters) {
-        const validation = validateArgs(llmCall.arguments, toolDef.parameters);
-        if (!validation.valid) {
-          const errorMessage = `Invalid arguments for tool "${llmCall.name}": ${validation.errors.join('; ')}`;
+      const validation = await validateToolArgs(toolDef, llmCall.arguments);
+      if (!validation.valid) {
+        const errorMessage = `Invalid arguments for tool "${llmCall.name}": ${validation.errors.join('; ')}`;
 
-          if (debug) {
-            console.warn(`[react-observer-agent] ${errorMessage}`);
-          }
-
-          const invalidResult: ToolCallResult = {
-            toolName: llmCall.name,
-            args: llmCall.arguments,
-            result: errorMessage,
-            status: 'error',
-          };
-          allToolCalls.push(invalidResult);
-          options?.onToolCall?.({
-            toolName: llmCall.name,
-            args: llmCall.arguments,
-            result: errorMessage,
-            status: 'error',
-          });
-          messages.push({
-            role: 'tool',
-            content: JSON.stringify({ error: errorMessage }),
-            toolCallId: llmCall.id,
-          });
-          continue;
+        if (debug) {
+          console.warn(`[react-observer-agent] ${errorMessage}`);
         }
+
+        record({
+          toolName: llmCall.name,
+          args: llmCall.arguments,
+          result: errorMessage,
+          status: 'error',
+        });
+        messages.push({
+          role: 'tool',
+          content: JSON.stringify({ error: errorMessage }),
+          toolCallId: llmCall.id,
+          isError: true,
+        });
+        continue;
       }
+
+      // A schema may apply defaults or transforms, so this is what the user
+      // confirms and what the handler runs on.
+      const value = validation.value;
 
       if (toolDef.confirm) {
         if (!options?.onConfirm) {
@@ -353,17 +440,10 @@ export async function executeAgentLoop(
               `[react-observer-agent] Tool "${llmCall.name}" requires confirmation but no onConfirm handler provided. Skipping.`,
             );
           }
-          const cancelledResult: ToolCallResult = {
+          record({
             toolName: llmCall.name,
             args: llmCall.arguments,
             result: 'Tool execution cancelled: no confirmation handler provided',
-            status: 'cancelled',
-          };
-          allToolCalls.push(cancelledResult);
-          options?.onToolCall?.({
-            toolName: llmCall.name,
-            args: llmCall.arguments,
-            result: cancelledResult.result,
             status: 'cancelled',
           });
           messages.push({
@@ -376,22 +456,33 @@ export async function executeAgentLoop(
 
         const confirmed = await options.onConfirm({
           toolName: llmCall.name,
-          args: llmCall.arguments,
+          args: value,
           description: toolDef.description,
+          signal,
         });
 
+        // Confirmation can take arbitrarily long, so the answer may arrive
+        // after the interaction was cancelled. It is stale either way.
+        if (signal?.aborted) {
+          record({
+            toolName: llmCall.name,
+            args: llmCall.arguments,
+            result: 'Tool execution cancelled: interaction aborted',
+            status: 'cancelled',
+          });
+          messages.push({
+            role: 'tool',
+            content: JSON.stringify({ status: 'cancelled', reason: 'Interaction aborted' }),
+            toolCallId: llmCall.id,
+          });
+          return abortedResult();
+        }
+
         if (!confirmed) {
-          const cancelledResult: ToolCallResult = {
+          record({
             toolName: llmCall.name,
             args: llmCall.arguments,
             result: 'Tool execution cancelled by user',
-            status: 'cancelled',
-          };
-          allToolCalls.push(cancelledResult);
-          options?.onToolCall?.({
-            toolName: llmCall.name,
-            args: llmCall.arguments,
-            result: cancelledResult.result,
             status: 'cancelled',
           });
           messages.push({
@@ -404,21 +495,23 @@ export async function executeAgentLoop(
       }
 
       try {
-        const result = await toolDef.handler(llmCall.arguments, { signal });
+        const result = await toolDef.handler(value, { signal });
         const status = toolDef.confirm ? 'confirmed' : 'success';
 
         if (debug) {
           console.log(`[react-observer-agent] Tool "${llmCall.name}" executed:`, { status, result });
         }
 
-        const toolResult: ToolCallResult = {
-          toolName: llmCall.name,
-          args: llmCall.arguments,
-          result,
-          status,
-        };
-        allToolCalls.push(toolResult);
-        options?.onToolCall?.({
+        // Serialized before anything is recorded: a result the transcript
+        // cannot carry is a failed call, not a success with a missing message.
+        let content: string;
+        try {
+          content = JSON.stringify({ result });
+        } catch (error) {
+          throw new Error(`Tool result is not serializable: ${describeError(error)}`);
+        }
+
+        record({
           toolName: llmCall.name,
           args: llmCall.arguments,
           result,
@@ -426,19 +519,12 @@ export async function executeAgentLoop(
         });
         messages.push({
           role: 'tool',
-          content: JSON.stringify({ result }),
+          content,
           toolCallId: llmCall.id,
         });
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        const errorResult: ToolCallResult = {
-          toolName: llmCall.name,
-          args: llmCall.arguments,
-          result: errorMessage,
-          status: 'error',
-        };
-        allToolCalls.push(errorResult);
-        options?.onToolCall?.({
+        const errorMessage = describeError(error);
+        record({
           toolName: llmCall.name,
           args: llmCall.arguments,
           result: errorMessage,
@@ -448,6 +534,7 @@ export async function executeAgentLoop(
           role: 'tool',
           content: JSON.stringify({ error: errorMessage }),
           toolCallId: llmCall.id,
+          isError: true,
         });
       }
     }
@@ -475,12 +562,21 @@ export async function executeAgentLoop(
     };
   }
 
-  messages.push({ role: 'assistant', content: finalMessage });
+  // An empty assistant message is not a turn, and some providers reject it on
+  // replay.
+  if (finalMessage !== '') {
+    messages.push({
+      role: 'assistant',
+      content: finalMessage,
+      providerData: finalProviderData,
+    });
+  }
 
   return {
     response: {
       message: finalMessage,
       toolCalls: allToolCalls,
+      error: stopError,
       usage: usage.total(),
     },
     messages,
