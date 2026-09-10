@@ -7,6 +7,10 @@
  * one and `npm run typecheck` must fail on that line.
  */
 import { expectTypeOf } from 'vitest';
+import { type } from 'arktype';
+import * as v from 'valibot';
+import { z } from 'zod';
+import { z as z4 } from 'zod4';
 import { registerTool } from './registerTool';
 import type { StandardSchemaV1, ToolContext, ToolOptions } from '../types';
 
@@ -125,5 +129,63 @@ registerTool<{ id: string }>(
     description: 'Explicit generic with an agreeing schema',
     // @ts-expect-error an inline schema next to an explicit generic is an excess property
     schema: idStringSchema,
+  },
+);
+
+// Every validator the README promises support for (README.md:148), each with
+// a defaulted field, asserting the handler receives the schema OUTPUT type:
+// the default makes the field required on output even though it is optional
+// on input.
+//
+// Zod 3 and ArkType are the load-bearing cases. Both fail to match the schema
+// overload if its options type goes back to intersecting `ToolOptions`, though
+// they fail differently: Zod 3 on `deepPartial()` returning an object that
+// cannot satisfy the intersection, ArkType on instantiation depth. Zod 4 and
+// Valibot pass either way, so they pin the inference rather than the overload.
+registerTool(
+  'zod3Defaulted',
+  (args) => {
+    expectTypeOf(args).toEqualTypeOf<{ id: string }>();
+    return args.id;
+  },
+  {
+    description: 'Zod 3 with a default',
+    schema: z.object({ id: z.string().default('x') }),
+  },
+);
+
+registerTool(
+  'zod4Defaulted',
+  (args) => {
+    expectTypeOf(args).toEqualTypeOf<{ id: string }>();
+    return args.id;
+  },
+  {
+    description: 'Zod 4 with a default',
+    schema: z4.object({ id: z4.string().default('x') }),
+  },
+);
+
+registerTool(
+  'valibotDefaulted',
+  (args) => {
+    expectTypeOf(args).toEqualTypeOf<{ id: string }>();
+    return args.id;
+  },
+  {
+    description: 'Valibot with a default',
+    schema: v.object({ id: v.optional(v.string(), 'x') }),
+  },
+);
+
+registerTool(
+  'arktypeDefaulted',
+  (args) => {
+    expectTypeOf(args).toEqualTypeOf<{ id: string }>();
+    return args.id;
+  },
+  {
+    description: 'ArkType with a default',
+    schema: type({ id: 'string = "x"' }),
   },
 );
