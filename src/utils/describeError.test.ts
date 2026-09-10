@@ -70,4 +70,42 @@ describe('describeError', () => {
       'No details available',
     );
   });
+
+  it('returns the fallback for an object whose message getter throws', () => {
+    const hostile = {
+      get message(): string {
+        throw new Error('nope');
+      },
+    };
+    expect(describeError(hostile)).toBe('Unknown error');
+  });
+
+  it('returns the fallback for an object whose toJSON throws', () => {
+    const hostile = {
+      toJSON(): never {
+        throw new Error('nope');
+      },
+    };
+    expect(describeError(hostile)).toBe('Unknown error');
+  });
+
+  it('does not throw for a null-prototype object', () => {
+    const hostile = Object.create(null) as Record<string, unknown>;
+    hostile.code = 500;
+    expect(() => describeError(hostile)).not.toThrow();
+    expect(describeError(hostile)).toBe(JSON.stringify(hostile));
+  });
+
+  it('returns the fallback for a Proxy whose get trap throws', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        get(): never {
+          throw new Error('trapped');
+        },
+      },
+    );
+    expect(() => describeError(hostile)).not.toThrow();
+    expect(describeError(hostile)).toBe('Unknown error');
+  });
 });

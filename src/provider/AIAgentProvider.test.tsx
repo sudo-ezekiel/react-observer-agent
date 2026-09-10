@@ -985,6 +985,224 @@ describe('unmount abort', () => {
     expect(response!.error?.code).toBe('ABORTED');
     expect(ctx!.isProcessing).toBe(false);
   });
+
+  /**
+   * Races a pending send against a short timer instead of awaiting it bare,
+   * so a regression that parks the interaction fails this assertion rather
+   * than hanging the whole suite.
+   */
+  async function raceAgainstTimeout<T>(
+    pending: Promise<T>,
+  ): Promise<{ settled: boolean; value?: T }> {
+    let settled = false;
+    let value: T | undefined;
+    pending.then((v) => {
+      settled = true;
+      value = v;
+    });
+
+    await act(async () => {
+      await Promise.race([
+        pending,
+        new Promise<void>((resolve) => setTimeout(resolve, 300)),
+      ]);
+      // Give the microtask that flips `settled` a turn to run even when the
+      // timer, not `pending`, is the one that wins the race above.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    return { settled, value };
+  }
+
+  it('unmounting while a never-settling onConfirm is pending still resolves send as ABORTED, without calling onError, and records the call cancelled', async () => {
+    const onError = vi.fn();
+    // Shaped like every confirmation modal written before 0.3.0: it never
+    // reads context.signal and never settles once the UI it belonged to is
+    // gone.
+    const onConfirm = vi.fn(() => new Promise<boolean>(() => {}));
+    const model: ModelAdapter = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+      }),
+    };
+    const tools: ToolDefinition[] = [
+      registerTool('clearCart', () => ({ cleared: true }), {
+        description: 'Clear the cart',
+        confirm: true,
+      }),
+    ];
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    const { unmount } = render(
+      <AIAgentProvider
+        {...createDefaultProps({
+          model,
+          tools,
+          permissions: { canAccess: [], canExecute: ['clearCart'] },
+          options: { onConfirm, onError },
+        })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    let pending: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      pending = ctx!.send('clear it');
+    });
+
+    expect(onConfirm).toHaveBeenCalledOnce();
+
+    unmount();
+
+    const { settled, value: response } = await raceAgainstTimeout(pending!);
+
+    expect(settled).toBe(true);
+    expect(response!.error?.code).toBe('ABORTED');
+    expect(onError).not.toHaveBeenCalled();
+    const lastCall = response!.toolCalls[response!.toolCalls.length - 1];
+    expect(lastCall.status).toBe('cancelled');
+  });
+
+  it('a second send queued behind a parked onConfirm interaction still drains once unmount aborts it', async () => {
+    const onConfirm = vi.fn(() => new Promise<boolean>(() => {}));
+    const model: ModelAdapter = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+      }),
+    };
+    const tools: ToolDefinition[] = [
+      registerTool('clearCart', () => ({ cleared: true }), {
+        description: 'Clear the cart',
+        confirm: true,
+      }),
+    ];
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    const { unmount } = render(
+      <AIAgentProvider
+        {...createDefaultProps({
+          model,
+          tools,
+          permissions: { canAccess: [], canExecute: ['clearCart'] },
+          options: { onConfirm },
+        })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    let firstPending: Promise<AgentResponse> | undefined;
+    let secondPending: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      firstPending = ctx!.send('clear it');
+      secondPending = ctx!.send('clear it again');
+    });
+
+    expect(onConfirm).toHaveBeenCalledOnce();
+
+    unmount();
+
+    const first = await raceAgainstTimeout(firstPending!);
+    const second = await raceAgainstTimeout(secondPending!);
+
+    expect(first.settled).toBe(true);
+    expect(first.value!.error?.code).toBe('ABORTED');
+    expect(second.settled).toBe(true);
+    expect(second.value!.error?.code).toBe('ABORTED');
+  });
+
+  it('unmounting while a tool handler that ignores context.signal never settles still resolves send as ABORTED and records the call cancelled', async () => {
+    const onError = vi.fn();
+    const handler = vi.fn(() => new Promise<unknown>(() => {}));
+    const model: ModelAdapter = {
+      sendMessage: vi.fn().mockResolvedValue({
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+      }),
+    };
+    const tools: ToolDefinition[] = [
+      registerTool('clearCart', handler, {
+        description: 'Clear the cart',
+      }),
+    ];
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    const { unmount } = render(
+      <AIAgentProvider
+        {...createDefaultProps({
+          model,
+          tools,
+          permissions: { canAccess: [], canExecute: ['clearCart'] },
+          options: { onError },
+        })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    let pending: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      pending = ctx!.send('clear it');
+    });
+
+    expect(handler).toHaveBeenCalledOnce();
+
+    unmount();
+
+    const { settled, value: response } = await raceAgainstTimeout(pending!);
+
+    expect(settled).toBe(true);
+    expect(response!.error?.code).toBe('ABORTED');
+    const lastCall = response!.toolCalls[response!.toolCalls.length - 1];
+    expect(lastCall.status).toBe('cancelled');
+  });
+
+  it('unmounting while the model adapter never settles and ignores the signal still resolves send as ABORTED with no tool calls', async () => {
+    const sendMessage = vi.fn(() => new Promise<ModelResponse>(() => {}));
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    const { unmount } = render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    let pending: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      pending = ctx!.send('hello');
+    });
+
+    expect(sendMessage).toHaveBeenCalledOnce();
+
+    unmount();
+
+    const { settled, value: response } = await raceAgainstTimeout(pending!);
+
+    expect(settled).toBe(true);
+    expect(response!.error?.code).toBe('ABORTED');
+    expect(response!.toolCalls).toEqual([]);
+  });
 });
 
 describe('pinned options per interaction', () => {

@@ -1950,4 +1950,46 @@ describe('executeAgentLoop transcript', () => {
       error: 'User closed dialog',
     });
   });
+
+  it('records a tool_end and an error entry instead of throwing when the handler throws a hostile object describeError cannot read', async () => {
+    const onToolCall = vi.fn();
+    const events: AgentEvent[] = [];
+    const hostile = new Proxy(
+      {},
+      {
+        get(): never {
+          throw new Error('trapped');
+        },
+      },
+    );
+    const handler = () => {
+      throw hostile;
+    };
+    const adapter = mockAdapter(
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'charge', arguments: {} }],
+      },
+      { content: 'Could not charge.' },
+    );
+
+    const { response, messages } = await executeAgentLoop('charge the card', {
+      model: adapter,
+      state: {},
+      tools: [
+        registerTool('charge', handler, { description: 'Charges a card' }),
+      ],
+      permissions: { canAccess: [], canExecute: ['charge'] },
+      options: { onToolCall, onEvent: (e) => events.push(e) },
+      conversationHistory: [],
+    });
+
+    expect(response.toolCalls).toHaveLength(1);
+    expect(response.toolCalls[0].status).toBe('error');
+
+    expect(events.filter((e) => e.type === 'tool_end')).toHaveLength(1);
+
+    const toolMessage = messages.find((m) => m.role === 'tool');
+    expect(toolMessage!.isError).toBe(true);
+  });
 });
