@@ -25,6 +25,7 @@
   "scripts": {
     "build": "tsup",
     "lint": "eslint src/",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "prettier --write 'src/**/*.{ts,tsx}'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx}'",
     "test": "vitest run --passWithNoTests",
