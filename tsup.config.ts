@@ -8,4 +8,6 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   external: ['react'],
+  // Marks the bundle as client-only so Next.js App Router imports work without a wrapper.
+  banner: { js: "'use client';" },
 });

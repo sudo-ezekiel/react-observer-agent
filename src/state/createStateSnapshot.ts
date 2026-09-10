@@ -30,10 +30,47 @@ function isSerializableValue(value: unknown): boolean {
   return true;
 }
 
+/**
+ * One oversized key would otherwise spend the whole context window on a read
+ * the model cannot take back.
+ */
+function applyByteLimit(
+  snapshot: Record<string, unknown>,
+  maxBytes: number,
+  debug: boolean,
+): Record<string, unknown> {
+  const limited: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(snapshot)) {
+    // Undefined has no JSON representation, so there is nothing to measure.
+    const json = JSON.stringify(value);
+    if (json === undefined || json.length <= maxBytes) {
+      limited[key] = value;
+      continue;
+    }
+
+    if (debug) {
+      console.warn(
+        `[react-observer-agent] State key "${key}" is ${json.length} bytes, over the ${maxBytes} byte limit, and was truncated`,
+      );
+    }
+
+    limited[key] = {
+      __truncated: true,
+      limit: maxBytes,
+      bytes: json.length,
+      preview: json.slice(0, maxBytes),
+    };
+  }
+
+  return limited;
+}
+
 export function createStateSnapshot(
   state: StateSource,
   canAccess: string[],
   debug: boolean = false,
+  maxBytes?: number,
 ): Record<string, unknown> {
   const resolved = resolveState(state);
   const filtered: Record<string, unknown> = {};
@@ -53,5 +90,9 @@ export function createStateSnapshot(
     }
   }
 
-  return stripNonSerializable(filtered, debug);
+  const snapshot = stripNonSerializable(filtered, debug);
+
+  return maxBytes === undefined
+    ? snapshot
+    : applyByteLimit(snapshot, maxBytes, debug);
 }

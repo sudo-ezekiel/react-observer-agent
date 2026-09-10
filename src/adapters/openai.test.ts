@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { openAIAdapter } from './openai';
+import { AdapterError } from './AdapterError';
 import type { ModelRequest } from '../types';
 
 function createRequest(overrides: Partial<ModelRequest> = {}): ModelRequest {
@@ -32,6 +33,17 @@ const textResponse = {
   ],
   usage: { prompt_tokens: 10, completion_tokens: 5 },
 };
+
+function responseWithFinishReason(finishReason: string) {
+  return {
+    choices: [
+      {
+        message: { role: 'assistant', content: 'partial' },
+        finish_reason: finishReason,
+      },
+    ],
+  };
+}
 
 const toolCallResponse = {
   choices: [
@@ -84,7 +96,10 @@ describe('openAIAdapter', () => {
     });
 
     it('creates adapter with both apiKey and baseURL', () => {
-      const adapter = openAIAdapter({ apiKey: 'sk-test', baseURL: '/api/agent' });
+      const adapter = openAIAdapter({
+        apiKey: 'sk-test',
+        baseURL: '/api/agent',
+      });
       expect(adapter).toBeDefined();
     });
   });
@@ -124,7 +139,10 @@ describe('openAIAdapter', () => {
             {
               name: 'addToCart',
               description: 'Add item to cart',
-              parameters: { type: 'object', properties: { productId: { type: 'string' } } },
+              parameters: {
+                type: 'object',
+                properties: { productId: { type: 'string' } },
+              },
             },
           ],
         }),
@@ -137,7 +155,10 @@ describe('openAIAdapter', () => {
           function: {
             name: 'addToCart',
             description: 'Add item to cart',
-            parameters: { type: 'object', properties: { productId: { type: 'string' } } },
+            parameters: {
+              type: 'object',
+              properties: { productId: { type: 'string' } },
+            },
           },
         },
       ]);
@@ -153,7 +174,10 @@ describe('openAIAdapter', () => {
       );
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(body.messages[0]).toEqual({ role: 'system', content: 'You are a helpful assistant.' });
+      expect(body.messages[0]).toEqual({
+        role: 'system',
+        content: 'You are a helpful assistant.',
+      });
       expect(body.messages[1]).toEqual({ role: 'user', content: 'Hello' });
     });
 
@@ -183,6 +207,17 @@ describe('openAIAdapter', () => {
       expect(body.temperature).toBe(0.8);
     });
 
+    it('omits temperature entirely when configured as null', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test', temperature: null });
+      await adapter.sendMessage(createRequest());
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect('temperature' in body).toBe(false);
+    });
+
     it('merges custom headers', async () => {
       const fetchMock = mockFetch(textResponse);
       globalThis.fetch = fetchMock;
@@ -206,7 +241,12 @@ describe('openAIAdapter', () => {
       await adapter.sendMessage(
         createRequest({
           messages: [
-            { role: 'tool', content: '{"result": true}', toolCallId: 'call_123', toolCalls: [] },
+            {
+              role: 'tool',
+              content: '{"result": true}',
+              toolCallId: 'call_123',
+              toolCalls: [],
+            },
           ],
         }),
       );
@@ -228,7 +268,11 @@ describe('openAIAdapter', () => {
               role: 'assistant',
               content: 'Adding it now.',
               toolCalls: [
-                { id: 'call_123', name: 'addToCart', arguments: { productId: 'abc' } },
+                {
+                  id: 'call_123',
+                  name: 'addToCart',
+                  arguments: { productId: 'abc' },
+                },
               ],
             },
             {
@@ -267,7 +311,13 @@ describe('openAIAdapter', () => {
             {
               role: 'assistant',
               content: '',
-              toolCalls: [{ id: 'call_1', name: '__readState', arguments: { keys: ['cart'] } }],
+              toolCalls: [
+                {
+                  id: 'call_1',
+                  name: '__readState',
+                  arguments: { keys: ['cart'] },
+                },
+              ],
             },
           ],
         }),
@@ -275,7 +325,9 @@ describe('openAIAdapter', () => {
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       expect(body.messages[0].content).toBeNull();
-      expect(body.messages[0].tool_calls[0].function.arguments).toBe('{"keys":["cart"]}');
+      expect(body.messages[0].tool_calls[0].function.arguments).toBe(
+        '{"keys":["cart"]}',
+      );
     });
 
     it('omits tool_calls for messages without them', async () => {
@@ -294,7 +346,32 @@ describe('openAIAdapter', () => {
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       expect(body.messages[0]).toEqual({ role: 'user', content: 'Hello' });
-      expect(body.messages[1]).toEqual({ role: 'assistant', content: 'Hi there' });
+      expect(body.messages[1]).toEqual({
+        role: 'assistant',
+        content: 'Hi there',
+      });
+    });
+
+    it('skips assistant messages with empty content and no tool calls', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      await adapter.sendMessage(
+        createRequest({
+          messages: [
+            { role: 'user', content: 'Hello', toolCalls: [] },
+            { role: 'assistant', content: '', toolCalls: [] },
+            { role: 'user', content: 'Still there?', toolCalls: [] },
+          ],
+        }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.messages).toEqual([
+        { role: 'user', content: 'Hello' },
+        { role: 'user', content: 'Still there?' },
+      ]);
     });
   });
 
@@ -335,11 +412,96 @@ describe('openAIAdapter', () => {
 
       expect(response.usage).toBeUndefined();
     });
+
+    it('maps cached prompt tokens to cacheReadTokens', async () => {
+      globalThis.fetch = mockFetch({
+        choices: [{ message: { role: 'assistant', content: 'hi' } }],
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 5,
+          prompt_tokens_details: { cached_tokens: 64 },
+        },
+      });
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const response = await adapter.sendMessage(createRequest());
+
+      expect(response.usage).toEqual({
+        promptTokens: 100,
+        completionTokens: 5,
+        cacheReadTokens: 64,
+      });
+    });
+
+    it('leaves cacheReadTokens off when the response reports no cached tokens', async () => {
+      globalThis.fetch = mockFetch(textResponse);
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const response = await adapter.sendMessage(createRequest());
+
+      expect(response.usage).toEqual({ promptTokens: 10, completionTokens: 5 });
+    });
+
+    it('maps finish_reason "stop" to stopReason "end"', async () => {
+      globalThis.fetch = mockFetch(responseWithFinishReason('stop'));
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const response = await adapter.sendMessage(createRequest());
+
+      expect(response.stopReason).toBe('end');
+    });
+
+    it('maps finish_reason "tool_calls" to stopReason "tool_use"', async () => {
+      globalThis.fetch = mockFetch(responseWithFinishReason('tool_calls'));
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const response = await adapter.sendMessage(createRequest());
+
+      expect(response.stopReason).toBe('tool_use');
+    });
+
+    it('maps finish_reason "function_call" to stopReason "tool_use"', async () => {
+      globalThis.fetch = mockFetch(responseWithFinishReason('function_call'));
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const response = await adapter.sendMessage(createRequest());
+
+      expect(response.stopReason).toBe('tool_use');
+    });
+
+    it('maps finish_reason "length" to stopReason "max_tokens"', async () => {
+      globalThis.fetch = mockFetch(responseWithFinishReason('length'));
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const response = await adapter.sendMessage(createRequest());
+
+      expect(response.stopReason).toBe('max_tokens');
+    });
+
+    it('maps finish_reason "content_filter" to stopReason "refusal"', async () => {
+      globalThis.fetch = mockFetch(responseWithFinishReason('content_filter'));
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const response = await adapter.sendMessage(createRequest());
+
+      expect(response.stopReason).toBe('refusal');
+    });
+
+    it('maps an unknown or missing finish_reason to stopReason "other"', async () => {
+      globalThis.fetch = mockFetch(textResponse);
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const response = await adapter.sendMessage(createRequest());
+
+      expect(response.stopReason).toBe('other');
+    });
   });
 
   describe('error handling', () => {
     it('throws on network error', async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error('Connection refused'));
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new Error('Connection refused'));
 
       const adapter = openAIAdapter({ apiKey: 'sk-test' });
       await expect(adapter.sendMessage(createRequest())).rejects.toThrow(
@@ -370,12 +532,43 @@ describe('openAIAdapter', () => {
     });
 
     it('throws on non-OK status', async () => {
-      globalThis.fetch = mockFetch({ error: { message: 'Rate limit exceeded' } }, 429);
+      globalThis.fetch = mockFetch(
+        { error: { message: 'Rate limit exceeded' } },
+        429,
+      );
 
       const adapter = openAIAdapter({ apiKey: 'sk-test' });
       await expect(adapter.sendMessage(createRequest())).rejects.toThrow(
         /OpenAI API error \(429\)/,
       );
+    });
+
+    it('throws an AdapterError carrying the status and body on non-OK status', async () => {
+      const errorBody = { error: { message: 'Invalid API key' } };
+      globalThis.fetch = mockFetch(errorBody, 401);
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const error = await adapter
+        .sendMessage(createRequest())
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AdapterError);
+      expect((error as AdapterError).status).toBe(401);
+      expect((error as AdapterError).body).toBe(JSON.stringify(errorBody));
+    });
+
+    it('throws an AdapterError without a status on network failure', async () => {
+      const cause = new Error('Connection refused');
+      globalThis.fetch = vi.fn().mockRejectedValue(cause);
+
+      const adapter = openAIAdapter({ apiKey: 'sk-test' });
+      const error = await adapter
+        .sendMessage(createRequest())
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AdapterError);
+      expect((error as AdapterError).status).toBeUndefined();
+      expect((error as AdapterError & { cause?: unknown }).cause).toBe(cause);
     });
 
     it('throws on malformed response (no choices)', async () => {

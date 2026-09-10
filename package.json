@@ -1,6 +1,6 @@
 {
   "name": "react-observer-agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A React library that enables AI agents to observe application state, understand user context, and execute pre-defined actions through a declarative provider pattern.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -25,22 +25,28 @@
   "scripts": {
     "build": "tsup",
     "lint": "eslint src/",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "prettier --write 'src/**/*.{ts,tsx}'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx}'",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build && npm run lint && npm run test"
+    "prepublishOnly": "npm run build && npm run lint && npm run test",
+    "test:coverage": "vitest run --coverage",
+    "check:package": "publint && attw --pack ."
   },
   "peerDependencies": {
     "react": ">=18.0.0"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
     "@testing-library/react": "^16.1.0",
     "@types/react": "^18.3.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.0.0",
     "jsdom": "^25.0.0",
     "prettier": "^3.4.0",
+    "publint": "^0.3.24",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "tsup": "^8.3.0",

@@ -51,9 +51,7 @@ describe('validateToolNames', () => {
   it('throws when a tool shadows the internal readState tool', () => {
     const tools = [registerTool('__readState', () => {})];
 
-    expect(() => validateToolNames(tools)).toThrowError(
-      /reserved "__" prefix/,
-    );
+    expect(() => validateToolNames(tools)).toThrowError(/reserved "__" prefix/);
   });
 
   it('throws on any name using the reserved prefix', () => {
@@ -62,9 +60,7 @@ describe('validateToolNames', () => {
       registerTool('__anything', () => {}),
     ];
 
-    expect(() => validateToolNames(tools)).toThrowError(
-      /reserved "__" prefix/,
-    );
+    expect(() => validateToolNames(tools)).toThrowError(/reserved "__" prefix/);
   });
 
   it('allows underscores that are not a leading double underscore', () => {

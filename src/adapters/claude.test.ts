@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { claudeAdapter } from './claude';
+import { AdapterError } from './AdapterError';
 import type { ModelRequest } from '../types';
 
 function createRequest(overrides: Partial<ModelRequest> = {}): ModelRequest {
@@ -135,7 +136,7 @@ describe('claudeAdapter', () => {
       expect(body.max_tokens).toBe(2048);
     });
 
-    it('sends the system prompt as a top-level field', async () => {
+    it('sends the system prompt as a cached text block by default', async () => {
       const fetchMock = mockFetch(textResponse);
       globalThis.fetch = fetchMock;
 
@@ -144,8 +145,39 @@ describe('claudeAdapter', () => {
       );
 
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      expect(body.system).toBe('You are helpful.');
+      expect(body.system).toEqual([
+        {
+          type: 'text',
+          text: 'You are helpful.',
+          cache_control: { type: 'ephemeral' },
+        },
+      ]);
       expect(body.messages[0].role).toBe('user');
+    });
+
+    it('sends the system prompt as a plain string when cache is false', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      await claudeAdapter({ apiKey: 'sk-ant-test', cache: false }).sendMessage(
+        createRequest({ systemPrompt: 'You are helpful.' }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.system).toBe('You are helpful.');
+    });
+
+    it('omits the system field when there is no system prompt', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(
+        createRequest(),
+      );
+
+      expect(
+        JSON.parse(fetchMock.mock.calls[0][1].body).system,
+      ).toBeUndefined();
     });
 
     it('maps tools to input_schema', async () => {
@@ -332,6 +364,131 @@ describe('claudeAdapter', () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       expect(body.messages[0].content[0].input).toEqual({});
     });
+
+    it('replays providerData blocks verbatim, signatures included', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+      const rawBlocks = [
+        {
+          type: 'thinking',
+          thinking: 'Checking the cart.',
+          signature: 'sig-1',
+        },
+        { type: 'text', text: 'Adding it now.' },
+        {
+          type: 'tool_use',
+          id: 'toolu_1',
+          name: 'addToCart',
+          input: { productId: 'abc' },
+        },
+      ];
+
+      await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(
+        createRequest({
+          messages: [
+            { role: 'user', content: 'Add it', toolCalls: [] },
+            {
+              role: 'assistant',
+              content: 'Adding it now.',
+              toolCalls: [
+                {
+                  id: 'toolu_1',
+                  name: 'addToCart',
+                  arguments: { productId: 'abc' },
+                },
+              ],
+              providerData: rawBlocks,
+            },
+          ],
+        }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.messages[1]).toEqual({
+        role: 'assistant',
+        content: rawBlocks,
+      });
+    });
+
+    it('rebuilds blocks when providerData is not a non-empty array', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(
+        createRequest({
+          messages: [
+            {
+              role: 'assistant',
+              content: 'Working on it.',
+              toolCalls: [{ id: 't1', name: 'a', arguments: {} }],
+              providerData: [],
+            },
+          ],
+        }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.messages[0].content).toEqual([
+        { type: 'text', text: 'Working on it.' },
+        { type: 'tool_use', id: 't1', name: 'a', input: {} },
+      ]);
+    });
+
+    it('skips an empty assistant message that carries no tool calls', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(
+        createRequest({
+          messages: [
+            { role: 'user', content: 'Hello', toolCalls: [] },
+            { role: 'assistant', content: '', toolCalls: [] },
+          ],
+        }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.messages).toEqual([{ role: 'user', content: 'Hello' }]);
+    });
+
+    it('marks a failed tool message with is_error', async () => {
+      const fetchMock = mockFetch(textResponse);
+      globalThis.fetch = fetchMock;
+
+      await claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(
+        createRequest({
+          messages: [
+            {
+              role: 'assistant',
+              content: '',
+              toolCalls: [
+                { id: 't1', name: 'a', arguments: {} },
+                { id: 't2', name: 'b', arguments: {} },
+              ],
+            },
+            {
+              role: 'tool',
+              content: '{"error":"denied"}',
+              toolCallId: 't1',
+              toolCalls: [],
+              isError: true,
+            },
+            { role: 'tool', content: 'ok', toolCallId: 't2', toolCalls: [] },
+          ],
+        }),
+      );
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.messages[1].content).toEqual([
+        {
+          type: 'tool_result',
+          tool_use_id: 't1',
+          content: '{"error":"denied"}',
+          is_error: true,
+        },
+        { type: 'tool_result', tool_use_id: 't2', content: 'ok' },
+      ]);
+    });
   });
 
   describe('response parsing', () => {
@@ -401,6 +558,63 @@ describe('claudeAdapter', () => {
 
       expect(response.usage).toBeUndefined();
     });
+
+    it('maps the cache token counts when the API reports them', async () => {
+      globalThis.fetch = mockFetch({
+        content: [{ type: 'text', text: 'hi' }],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 900,
+          cache_creation_input_tokens: 120,
+        },
+      });
+
+      const response = await claudeAdapter({
+        apiKey: 'sk-ant-test',
+      }).sendMessage(createRequest());
+
+      expect(response.usage).toEqual({
+        promptTokens: 1030,
+        completionTokens: 5,
+        cacheReadTokens: 900,
+        cacheWriteTokens: 120,
+      });
+    });
+
+    it.each([
+      ['end_turn', 'end'],
+      ['tool_use', 'tool_use'],
+      ['max_tokens', 'max_tokens'],
+      ['refusal', 'refusal'],
+      ['pause_turn', 'other'],
+      [undefined, 'other'],
+    ])('maps stop_reason %s to %s', async (stopReason, expected) => {
+      globalThis.fetch = mockFetch({
+        content: [{ type: 'text', text: 'hi' }],
+        stop_reason: stopReason,
+      });
+
+      const response = await claudeAdapter({
+        apiKey: 'sk-ant-test',
+      }).sendMessage(createRequest());
+
+      expect(response.stopReason).toBe(expected);
+    });
+
+    it('returns the raw content blocks as providerData', async () => {
+      const blocks = [
+        { type: 'thinking', thinking: 'Hmm.', signature: 'sig-1' },
+        { type: 'text', text: 'Done.' },
+      ];
+      globalThis.fetch = mockFetch({ content: blocks });
+
+      const response = await claudeAdapter({
+        apiKey: 'sk-ant-test',
+      }).sendMessage(createRequest());
+
+      expect(response.providerData).toEqual(blocks);
+    });
   });
 
   describe('error handling', () => {
@@ -430,6 +644,34 @@ describe('claudeAdapter', () => {
       await expect(
         claudeAdapter({ apiKey: 'sk-ant-test' }).sendMessage(createRequest()),
       ).rejects.toThrow(/Anthropic API error \(529\)/);
+    });
+
+    it('carries the status and body on the AdapterError', async () => {
+      const payload = { error: { message: 'invalid api key' } };
+      globalThis.fetch = mockFetch(payload, 401);
+
+      const error = await claudeAdapter({ apiKey: 'sk-ant-test' })
+        .sendMessage(createRequest())
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AdapterError);
+      expect(error).toMatchObject({
+        name: 'AdapterError',
+        status: 401,
+        body: JSON.stringify(payload),
+      });
+    });
+
+    it('throws an AdapterError without a status on network failure', async () => {
+      const cause = new Error('Connection refused');
+      globalThis.fetch = vi.fn().mockRejectedValue(cause);
+
+      const error = await claudeAdapter({ apiKey: 'sk-ant-test' })
+        .sendMessage(createRequest())
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(AdapterError);
+      expect(error).toMatchObject({ status: undefined, cause });
     });
 
     it('throws on a malformed response', async () => {

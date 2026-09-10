@@ -107,4 +107,65 @@ describe('createStateSnapshot', () => {
       'store unavailable',
     );
   });
+
+  describe('maxBytes', () => {
+    it('leaves values alone when no limit is given', () => {
+      const state = { notes: 'x'.repeat(1000) };
+      const result = createStateSnapshot(state, ['notes']);
+
+      expect(result.notes).toBe('x'.repeat(1000));
+    });
+
+    it('replaces an oversized value with a truncation marker', () => {
+      const state = { notes: 'x'.repeat(100), tag: 'ok' };
+      const result = createStateSnapshot(state, ['notes', 'tag'], false, 20);
+
+      expect(result.tag).toBe('ok');
+      expect(result.notes).toEqual({
+        __truncated: true,
+        limit: 20,
+        // The 100 characters plus the two quotes JSON adds.
+        bytes: 102,
+        preview: JSON.stringify('x'.repeat(100)).slice(0, 20),
+      });
+    });
+
+    it('keeps a value whose JSON is exactly at the limit', () => {
+      const state = { tag: 'abc' };
+      // '"abc"' is five characters.
+      const result = createStateSnapshot(state, ['tag'], false, 5);
+
+      expect(result.tag).toBe('abc');
+    });
+
+    it('measures the serialized form, not the object', () => {
+      const state = { user: { name: 'Alice', email: 'alice@example.com' } };
+      const result = createStateSnapshot(state, ['user'], false, 10);
+
+      expect(result.user).toMatchObject({ __truncated: true, limit: 10 });
+      expect((result.user as { preview: string }).preview).toBe('{"name":"A');
+    });
+
+    it('warns in debug mode when a value is truncated', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      createStateSnapshot({ notes: 'x'.repeat(100) }, ['notes'], true, 20);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('over the 20 byte limit'),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('leaves undefined alone, since it has no serialized form', () => {
+      const result = createStateSnapshot(
+        { missing: undefined },
+        ['missing'],
+        false,
+        1,
+      );
+
+      expect(result).toEqual({ missing: undefined });
+    });
+  });
 });
