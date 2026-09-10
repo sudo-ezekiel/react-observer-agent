@@ -18,6 +18,7 @@ import { filterTools } from '../permissions/filterTools';
 import { validateToolCall } from '../permissions/validateToolCall';
 import { validateArgs } from '../tools/validateArgs';
 import { validateToolArgs } from '../tools/validateToolArgs';
+import { abortRace } from '../utils/abortRace';
 import { describeError } from '../utils/describeError';
 
 const DEFAULT_MAX_TURNS = 5;
@@ -297,14 +298,22 @@ export async function executeAgentLoop(
     emit({ type: 'turn_start', turn: turns, maxTurns });
 
     let modelResponse;
+    const modelAbort = abortRace(signal);
     try {
-      modelResponse = await model.sendMessage(modelRequest);
+      // Raced rather than awaited bare: a custom adapter that ignores the
+      // signal would otherwise hold the interaction open past a cancel.
+      modelResponse = await Promise.race([
+        model.sendMessage(modelRequest),
+        modelAbort.promise,
+      ]);
     } catch (error) {
       // An adapter that forwarded the signal rejects rather than resolving.
       if (isAbortError(error) || signal?.aborted) {
         return abortedResult();
       }
       throw error;
+    } finally {
+      modelAbort.release();
     }
 
     usage.add(modelResponse.usage);
@@ -521,13 +530,19 @@ export async function executeAgentLoop(
         }
 
         let confirmed: boolean;
+        const confirmAbort = abortRace(signal);
         try {
-          confirmed = await options.onConfirm({
-            toolName: llmCall.name,
-            args: value,
-            description: toolDef.description,
-            signal,
-          });
+          // A confirmation UI that unmounts with its provider never answers,
+          // so the abort has to be able to end this wait on its own.
+          confirmed = await Promise.race([
+            options.onConfirm({
+              toolName: llmCall.name,
+              args: value,
+              description: toolDef.description,
+              signal,
+            }),
+            confirmAbort.promise,
+          ]);
         } catch (error) {
           // A confirmation UI that unmounts on cancel rejects rather than
           // answering, which is a cancel and not a tool failure.
@@ -549,6 +564,8 @@ export async function executeAgentLoop(
             isError: true,
           });
           continue;
+        } finally {
+          confirmAbort.release();
         }
 
         // Confirmation can take arbitrarily long, so the answer may arrive
@@ -580,8 +597,14 @@ export async function executeAgentLoop(
       // happens after it, so a throwing callback cannot trigger a second
       // report through the catch.
       let outcome: ToolCallOutcome;
+      const handlerAbort = abortRace(signal);
       try {
-        const result = await toolDef.handler(value, { signal });
+        // A handler that never forwards the signal can still run forever, so
+        // the abort ends the wait even though the work itself carries on.
+        const result = await Promise.race([
+          toolDef.handler(value, { signal }),
+          handlerAbort.promise,
+        ]);
 
         // Serialized before anything is recorded: a result the transcript
         // cannot carry is a failed call, not a success with a missing message.
@@ -602,6 +625,8 @@ export async function executeAgentLoop(
           isAbortError(error) && signal?.aborted
             ? { kind: 'cancelled' }
             : { kind: 'error', message: describeError(error) };
+      } finally {
+        handlerAbort.release();
       }
 
       if (outcome.kind === 'cancelled') {

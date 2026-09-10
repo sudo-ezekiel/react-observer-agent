@@ -85,11 +85,19 @@ function registerTool<S extends StandardSchemaV1>(
   handler: ToolHandler<InferSchemaOutput<S>>,
   options: ToolOptions & { schema: S },
 ): ToolDefinition<InferSchemaOutput<S>>;
-// Without one, the argument type is the handler's own.
-function registerTool<TArgs = unknown>(
+// Without one, the argument type is the handler's own. `O` defaults to options
+// with no `schema` key, so an explicit type argument and an inline schema
+// cannot both claim to define `TArgs`. See the typing note below.
+function registerTool<
+  TArgs = unknown,
+  O extends ToolOptions = Omit<ToolOptions, 'schema'>,
+>(
   name: string,
   handler: ToolHandler<TArgs>,
-  options?: ToolOptions,
+  options?: O &
+    (O extends { schema: StandardSchemaV1 }
+      ? { schema: StandardSchemaV1<unknown, TArgs> }
+      : unknown),
 ): ToolDefinition<TArgs>;
 
 interface ToolOptions {

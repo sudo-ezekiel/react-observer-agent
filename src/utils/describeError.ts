@@ -8,6 +8,17 @@ export function describeError(
   error: unknown,
   fallback = 'Unknown error',
 ): string {
+  // This is the last line of defence in five catch blocks, so it must never be
+  // the thing that throws. A thrown value can be hostile: a getter that raises,
+  // a Proxy that traps, a null-prototype object.
+  try {
+    return describeUnsafely(error, fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+function describeUnsafely(error: unknown, fallback: string): string {
   if (error instanceof Error) {
     return error.message || error.name || fallback;
   }
