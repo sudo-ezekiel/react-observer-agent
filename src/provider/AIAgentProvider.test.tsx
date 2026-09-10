@@ -829,3 +829,209 @@ describe('state as function', () => {
     expect(captured).toBeDefined();
   });
 });
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('unmount abort', () => {
+  it('unmounting mid model call ends a confirm-gated interaction as ABORTED, without calling onError, once the model resolves', async () => {
+    const onError = vi.fn();
+    const onConfirm = vi.fn(() => new Promise<boolean>(() => {}));
+    const deferred = createDeferred<Partial<ModelResponse>>();
+    const sendMessage = vi.fn().mockImplementationOnce(() => deferred.promise);
+    const model: ModelAdapter = { sendMessage };
+    const tools: ToolDefinition[] = [
+      registerTool('clearCart', () => ({ cleared: true }), {
+        description: 'Clear the cart',
+        confirm: true,
+      }),
+    ];
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    const { unmount } = render(
+      <AIAgentProvider
+        {...createDefaultProps({
+          model,
+          tools,
+          permissions: { canAccess: [], canExecute: ['clearCart'] },
+          options: { onConfirm, onError },
+        })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    let pending: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      pending = ctx!.send('clear it');
+    });
+
+    unmount();
+
+    let response: AgentResponse | undefined;
+    await act(async () => {
+      deferred.resolve({
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+      });
+      response = await pending;
+    });
+
+    expect(response!.error?.code).toBe('ABORTED');
+    expect(onError).not.toHaveBeenCalled();
+    if (onConfirm.mock.calls.length > 0) {
+      const passedSignal = (
+        onConfirm.mock.calls[0][0] as { signal?: AbortSignal }
+      ).signal;
+      expect(passedSignal?.aborted).toBe(true);
+    }
+  });
+
+  it('a send captured before unmount resolves ABORTED when invoked after, without calling the model or onError', async () => {
+    const onError = vi.fn();
+    const model = createMockAdapter({ content: 'ok' });
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    const { unmount } = render(
+      <AIAgentProvider {...createDefaultProps({ model, options: { onError } })}>
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    const send = ctx!.send;
+    unmount();
+
+    let response: AgentResponse | undefined;
+    await act(async () => {
+      response = await send('hello');
+    });
+
+    expect(response!.error?.code).toBe('ABORTED');
+    expect(model.sendMessage).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('a send after mount completes normally under StrictMode, so the simulated unmount does not poison later sends', async () => {
+    const model = createMockAdapter({ content: 'ok' });
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <React.StrictMode>
+        <AIAgentProvider {...createDefaultProps({ model })}>
+          <TestConsumer
+            onContext={(c) => {
+              ctx = c;
+            }}
+          />
+        </AIAgentProvider>
+      </React.StrictMode>,
+    );
+
+    let response: AgentResponse | undefined;
+    await act(async () => {
+      response = await ctx!.send('hello');
+    });
+
+    expect(response!.message).toBe('ok');
+    expect(model.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborting through sendOptions.signal mid model call settles ABORTED and isProcessing returns to false', async () => {
+    const controller = new AbortController();
+    const deferred = createDeferred<Partial<ModelResponse>>();
+    const sendMessage = vi.fn().mockImplementationOnce(() => deferred.promise);
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    render(
+      <AIAgentProvider {...createDefaultProps({ model })}>
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    let pending: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      pending = ctx!.send('hello', { signal: controller.signal });
+    });
+
+    expect(ctx!.isProcessing).toBe(true);
+
+    let response: AgentResponse | undefined;
+    await act(async () => {
+      controller.abort();
+      deferred.resolve({ content: 'too late', toolCalls: [] });
+      response = await pending;
+    });
+
+    expect(response!.error?.code).toBe('ABORTED');
+    expect(ctx!.isProcessing).toBe(false);
+  });
+});
+
+describe('pinned options per interaction', () => {
+  it('reports a failure to the onError captured at interaction start, not one from a re-render mid interaction', async () => {
+    const onErrorA = vi.fn();
+    const onErrorB = vi.fn();
+    const deferred = createDeferred<Partial<ModelResponse>>();
+    const sendMessage = vi.fn().mockImplementationOnce(() => deferred.promise);
+    const model: ModelAdapter = { sendMessage };
+
+    let ctx: ReturnType<typeof useAgent> | undefined;
+    const { rerender } = render(
+      <AIAgentProvider
+        {...createDefaultProps({ model, options: { onError: onErrorA } })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    let pending: Promise<AgentResponse> | undefined;
+    await act(async () => {
+      pending = ctx!.send('hello');
+    });
+
+    rerender(
+      <AIAgentProvider
+        {...createDefaultProps({ model, options: { onError: onErrorB } })}
+      >
+        <TestConsumer
+          onContext={(c) => {
+            ctx = c;
+          }}
+        />
+      </AIAgentProvider>,
+    );
+
+    await act(async () => {
+      deferred.reject(new Error('network down'));
+      await pending;
+    });
+
+    expect(onErrorA).toHaveBeenCalledTimes(1);
+    expect(onErrorA.mock.calls[0][0].message).toBe('network down');
+    expect(onErrorB).not.toHaveBeenCalled();
+  });
+});

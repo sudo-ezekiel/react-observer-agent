@@ -1816,4 +1816,138 @@ describe('executeAgentLoop transcript', () => {
     expect(assistantMessages[0].providerData).toBe(toolTurnBlocks);
     expect(assistantMessages[1].providerData).toBe(finalBlocks);
   });
+
+  it('keeps a thrown string as the tool error text instead of "Unknown error"', async () => {
+    const onToolCall = vi.fn();
+    const events: AgentEvent[] = [];
+    const handler = () => {
+      throw 'Insufficient funds';
+    };
+    const adapter = mockAdapter(
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'charge', arguments: {} }],
+      },
+      { content: 'Could not charge.' },
+    );
+
+    const { response, messages } = await executeAgentLoop('charge the card', {
+      model: adapter,
+      state: {},
+      tools: [
+        registerTool('charge', handler, { description: 'Charges a card' }),
+      ],
+      permissions: { canAccess: [], canExecute: ['charge'] },
+      options: { onToolCall, onEvent: (e) => events.push(e) },
+      conversationHistory: [],
+    });
+
+    expect(response.toolCalls[0].status).toBe('error');
+    expect(response.toolCalls[0].result).toBe('Insufficient funds');
+
+    expect(onToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: 'Insufficient funds',
+        status: 'error',
+      }),
+    );
+
+    const toolEnd = events.find((e) => e.type === 'tool_end');
+    expect(toolEnd).toMatchObject({
+      result: 'Insufficient funds',
+      status: 'error',
+    });
+
+    const toolMessage = messages.find((m) => m.role === 'tool');
+    expect(toolMessage!.isError).toBe(true);
+    expect(JSON.parse(toolMessage!.content)).toEqual({
+      error: 'Insufficient funds',
+    });
+  });
+
+  it('keeps a rejected {code, message} object as the tool error text instead of "Unknown error"', async () => {
+    const onToolCall = vi.fn();
+    const events: AgentEvent[] = [];
+    const handler = async () => {
+      throw { code: 402, message: 'Card declined' };
+    };
+    const adapter = mockAdapter(
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'charge', arguments: {} }],
+      },
+      { content: 'Could not charge.' },
+    );
+
+    const { response, messages } = await executeAgentLoop('charge the card', {
+      model: adapter,
+      state: {},
+      tools: [
+        registerTool('charge', handler, { description: 'Charges a card' }),
+      ],
+      permissions: { canAccess: [], canExecute: ['charge'] },
+      options: { onToolCall, onEvent: (e) => events.push(e) },
+      conversationHistory: [],
+    });
+
+    expect(response.toolCalls[0].status).toBe('error');
+    expect(response.toolCalls[0].result).toBe('Card declined');
+
+    expect(onToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({ result: 'Card declined', status: 'error' }),
+    );
+
+    const toolEnd = events.find((e) => e.type === 'tool_end');
+    expect(toolEnd).toMatchObject({ result: 'Card declined', status: 'error' });
+
+    const toolMessage = messages.find((m) => m.role === 'tool');
+    expect(toolMessage!.isError).toBe(true);
+    expect(JSON.parse(toolMessage!.content)).toEqual({
+      error: 'Card declined',
+    });
+  });
+
+  it('keeps an onConfirm rejection string as the tool error text instead of "Unknown error"', async () => {
+    const onToolCall = vi.fn();
+    const events: AgentEvent[] = [];
+    const onConfirm = vi.fn().mockRejectedValue('User closed dialog');
+    const adapter = mockAdapter(
+      {
+        content: null,
+        toolCalls: [{ id: 'c1', name: 'clearCart', arguments: {} }],
+      },
+      { content: 'Not cleared.' },
+    );
+
+    const { response, messages } = await executeAgentLoop('clear it', {
+      model: adapter,
+      state: {},
+      tools: defaultTools(),
+      permissions: defaultPermissions,
+      options: { onConfirm, onToolCall, onEvent: (e) => events.push(e) },
+      conversationHistory: [],
+    });
+
+    expect(response.toolCalls[0].status).toBe('error');
+    expect(response.toolCalls[0].result).toBe('User closed dialog');
+
+    expect(onToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: 'User closed dialog',
+        status: 'error',
+      }),
+    );
+
+    const toolEnd = events.find((e) => e.type === 'tool_end');
+    expect(toolEnd).toMatchObject({
+      result: 'User closed dialog',
+      status: 'error',
+    });
+
+    const toolMessage = messages.find((m) => m.role === 'tool');
+    expect(toolMessage!.isError).toBe(true);
+    expect(JSON.parse(toolMessage!.content)).toEqual({
+      error: 'User closed dialog',
+    });
+  });
 });
