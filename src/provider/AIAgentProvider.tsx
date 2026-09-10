@@ -111,8 +111,6 @@ export function AIAgentProvider({
       // not start with.
       const options = optionsRef.current;
 
-      // The interaction ends when either the caller cancels or the provider
-      // goes away.
       const abort = linkSignals(
         sendOptions?.signal,
         unmountController().signal,
@@ -143,9 +141,8 @@ export function AIAgentProvider({
 
         response = loop.response;
 
-        // clearHistory() during the interaction means the user asked for this
-        // conversation to be gone, so nothing it produced is written back. The
-        // user entry appended above went with the clear.
+        // A clear mid-interaction took the user entry with it, so writing the
+        // rest back would rebuild half a conversation the user discarded.
         if (generation === generationRef.current) {
           // An abort can land between an assistant message and the tool results
           // answering it. Providers reject that shape, so the partial turn is
@@ -209,14 +206,10 @@ export function AIAgentProvider({
         abort.release();
       }
 
-      // The loop reports failures it recovered from by returning them, rather
-      // than throwing, so the error handler still needs to hear about them.
-      // A user-initiated cancel is not an application error.
-      //
-      // Reported here, past the catch, so a consumer callback that throws is not
-      // mistaken for a failure of the interaction: it would otherwise append a
-      // second assistant entry, overwrite lastResponse and fire onError again.
-      // The throw travels out of send() with the state writes already done.
+      // The loop returns recovered failures rather than throwing, so they still
+      // have to reach onError. A cancel is a caller decision, not a failure.
+      // Reported past the catch so a callback that throws is not mistaken for a
+      // failed interaction and reported a second time.
       if (response.error && response.error.code !== 'ABORTED') {
         options?.onError?.(response.error);
       }

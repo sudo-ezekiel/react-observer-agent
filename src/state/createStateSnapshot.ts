@@ -31,9 +31,8 @@ function isSerializableValue(value: unknown): boolean {
 }
 
 /**
- * Replaces any value whose JSON exceeds the ceiling with a marker carrying a
- * prefix of it. One oversized key would otherwise spend the whole context
- * window on a read the model cannot take back.
+ * One oversized key would otherwise spend the whole context window on a read
+ * the model cannot take back.
  */
 function applyByteLimit(
   snapshot: Record<string, unknown>,

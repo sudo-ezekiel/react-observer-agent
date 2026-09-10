@@ -332,8 +332,8 @@ export async function executeAgentLoop(
       finalMessage = modelResponse.content ?? '';
       finalProviderData = modelResponse.providerData;
 
-      // A cut-off or refused answer is still the answer, but the caller has to
-      // be able to tell it apart from a complete one.
+      // A cut-off or refused answer is still the answer, but the caller has
+      // to be able to tell it apart from a complete one.
       if (modelResponse.stopReason === 'max_tokens') {
         stopError = {
           message: 'Model output was cut off by the max tokens limit',
@@ -362,8 +362,7 @@ export async function executeAgentLoop(
       if (signal?.aborted) return abortedResult();
 
       if (llmCall.name === READ_STATE_TOOL_NAME) {
-        // Validated against the schema the tool advertises, since a model that
-        // sends `keys` as a string would otherwise crash the loop.
+        // A model that sends `keys` as a string would otherwise crash the loop.
         const readValidation = validateArgs(
           llmCall.arguments,
           READ_STATE_SCHEMA,
@@ -544,8 +543,8 @@ export async function executeAgentLoop(
             confirmAbort.promise,
           ]);
         } catch (error) {
-          // A confirmation UI that unmounts on cancel rejects rather than
-          // answering, which is a cancel and not a tool failure.
+          // A rejection is the confirmation surface giving up, which is a
+          // cancel rather than a tool failure.
           if (isAbortError(error) || signal?.aborted) {
             return cancelForAbort(llmCall.name, value, llmCall.id);
           }
@@ -568,7 +567,7 @@ export async function executeAgentLoop(
           confirmAbort.release();
         }
 
-        // Confirmation can take arbitrarily long, so the answer may arrive
+        // Confirmation can take arbitrarily long, so an answer may arrive
         // after the interaction was cancelled. It is stale either way.
         if (signal?.aborted) {
           return cancelForAbort(llmCall.name, value, llmCall.id);
@@ -606,8 +605,6 @@ export async function executeAgentLoop(
           handlerAbort.promise,
         ]);
 
-        // Serialized before anything is recorded: a result the transcript
-        // cannot carry is a failed call, not a success with a missing message.
         let content: string;
         try {
           content = JSON.stringify({ result });

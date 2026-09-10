@@ -8,9 +8,8 @@ export function describeError(
   error: unknown,
   fallback = 'Unknown error',
 ): string {
-  // This is the last line of defence in five catch blocks, so it must never be
-  // the thing that throws. A thrown value can be hostile: a getter that raises,
-  // a Proxy that traps, a null-prototype object.
+  // A thrown value can be hostile: a getter that raises, a Proxy that traps,
+  // a null-prototype object.
   try {
     return describeUnsafely(error, fallback);
   } catch {
@@ -39,8 +38,8 @@ function describeUnsafely(error: unknown, fallback: string): string {
 
     try {
       const serialized = JSON.stringify(error);
-      // '{}' means nothing survived serialization, which says no more than the
-      // fallback does. A circular structure or a throwing toJSON lands in catch.
+      // '{}' means nothing survived serialization, which says no more
+      // than the fallback does.
       if (typeof serialized === 'string' && serialized !== '{}') {
         return serialized;
       }

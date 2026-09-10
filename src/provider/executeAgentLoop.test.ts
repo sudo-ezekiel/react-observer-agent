@@ -1217,7 +1217,6 @@ describe('executeAgentLoop events', () => {
       model: adapter,
       state: {},
       tools: defaultTools(),
-      // Permitted by name, but never registered.
       permissions: { canAccess: [], canExecute: ['ghostTool'] },
       options: { onToolCall, onEvent },
       conversationHistory: [],
@@ -1295,7 +1294,6 @@ describe('executeAgentLoop tool execution', () => {
     const controller = new AbortController();
     const handler = vi.fn(() => ({ cleared: true }));
     const onConfirm = vi.fn(async () => {
-      // The interaction is cancelled underneath a prompt the user still answers.
       controller.abort();
       return true;
     });
@@ -1495,7 +1493,6 @@ describe('executeAgentLoop tool execution', () => {
     const controller = new AbortController();
     const handler = vi.fn(() => ({ cleared: true }));
     const onConfirm = vi.fn(async () => {
-      // The confirmation surface unmounts on cancel and its promise rejects.
       controller.abort();
       const abortError = new Error('The operation was aborted');
       abortError.name = 'AbortError';
@@ -1595,7 +1592,6 @@ describe('executeAgentLoop tool execution', () => {
         version: 1,
         vendor: 'test',
         validate: async (value) => {
-          // The interaction is cancelled while validation is still pending.
           controller.abort();
           return { value: value as { name: string } };
         },
@@ -1676,7 +1672,6 @@ describe('executeAgentLoop tool execution', () => {
   it('cancels when the handler rejects with an AbortError after the signal aborts', async () => {
     const controller = new AbortController();
     const handler = vi.fn(async () => {
-      // The handler forwarded the signal and its own work rejected on cancel.
       controller.abort();
       const abortError = new Error('The operation was aborted');
       abortError.name = 'AbortError';

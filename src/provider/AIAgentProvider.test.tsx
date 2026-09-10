@@ -1017,9 +1017,6 @@ describe('unmount abort', () => {
 
   it('unmounting while a never-settling onConfirm is pending still resolves send as ABORTED, without calling onError, and records the call cancelled', async () => {
     const onError = vi.fn();
-    // Shaped like every confirmation modal written before 0.3.0: it never
-    // reads context.signal and never settles once the UI it belonged to is
-    // gone.
     const onConfirm = vi.fn(() => new Promise<boolean>(() => {}));
     const model: ModelAdapter = {
       sendMessage: vi.fn().mockResolvedValue({

@@ -119,9 +119,6 @@ describe('abortRace', () => {
     const controller = new AbortController();
     const { promise, release } = abortRace(controller.signal);
 
-    // Attach a handler so the eventual rejection (if any leaked through)
-    // would not be reported as unhandled, while still proving via the
-    // timer race above that no rejection actually occurs after release.
     promise.catch(() => {});
 
     const guarded = Promise.resolve('done');

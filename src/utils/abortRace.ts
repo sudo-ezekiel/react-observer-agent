@@ -17,11 +17,9 @@ const never = (): Promise<never> => new Promise<never>(() => {});
  * Guards an await on consumer code that may never settle: a confirmation whose
  * UI unmounted, a handler that ignores `context.signal`. Racing gives the loop
  * back so the interaction ends and the queue drains. The consumer promise
- * itself keeps running, since JavaScript offers no way to cancel it; what the
- * race buys is that nothing waits on it forever.
+ * itself keeps running, since JavaScript offers no way to cancel it.
  */
 export function abortRace(signal?: AbortSignal): AbortRace {
-  // Nothing can interrupt the race, so the guarded promise decides it alone.
   if (!signal) return { promise: never(), release: () => {} };
 
   let release = (): void => {};

@@ -31,9 +31,6 @@ const idNumberSchema: StandardSchemaV1<{ id: number }, { id: number }> =
 const idStringSchema: StandardSchemaV1<{ id: string }, { id: string }> =
   makeSchema((v) => v as { id: string });
 
-// --- Must compile ---
-
-// (a) An un-annotated handler with an inline schema infers the schema output.
 registerTool(
   'inferredFromSchema',
   (args) => {
@@ -43,14 +40,12 @@ registerTool(
   { description: 'Uses a schema', schema: nameSchema },
 );
 
-// (b) An annotated handler that agrees with the inline schema output.
 registerTool(
   'annotatedAgreesWithSchema',
   (args: { name: string }) => args.name,
   { description: 'Uses a schema', schema: nameSchema },
 );
 
-// (c) Explicit generic with an inline `{ description, parameters }` (no schema).
 registerTool<{ path: string }>(
   'explicitGenericWithParameters',
   (args) => args.path,
@@ -63,8 +58,6 @@ registerTool<{ path: string }>(
   },
 );
 
-// (d) A `const opts: ToolOptions` variable with an annotated handler and no
-// explicit generic.
 const plainOptions: ToolOptions = { description: 'Plain options' };
 registerTool(
   'annotatedWithPlainOptions',
@@ -72,28 +65,24 @@ registerTool(
   plainOptions,
 );
 
-// (e) No options at all.
 registerTool('noOptions', (args: { id: string }) => args.id);
 
-// (f) A one-argument handler (no context parameter).
 registerTool('oneArgumentHandler', (args: { id: string }) => {
   return args.id;
 });
 
-// A two-argument handler still gets the context type.
 registerTool('twoArgumentHandler', (args: { id: string }, context) => {
   expectTypeOf(context).toEqualTypeOf<ToolContext | undefined>();
   return args.id;
 });
 
-// (g) Explicit generic plus a `ToolOptions`-typed variable, without a schema.
 registerTool<{ id: string }>(
   'explicitGenericWithPlainOptionsVar',
   (args) => args.id,
   plainOptions,
 );
 
-// (h) Explicit generic plus a `ToolOptions`-typed variable that does carry a
+// Explicit generic plus a `ToolOptions`-typed variable that does carry a
 // schema at the type level: still passes, since `ToolOptions.schema` is
 // optional and its output is unknown, so there is nothing to check against.
 const optionsWithUncheckedSchema: ToolOptions = {
@@ -106,11 +95,6 @@ registerTool<{ id: string }>(
   optionsWithUncheckedSchema,
 );
 
-// --- Must fail ---
-
-// An annotated handler that disagrees with an inline schema is rejected at
-// the call, since the schema overload requires the handler to accept exactly
-// the schema's output type.
 // @ts-expect-error handler args type disagrees with the inline schema output
 registerTool(
   'annotatedDisagreesWithSchema',
@@ -121,11 +105,9 @@ registerTool(
   },
 );
 
-// An explicit generic next to an inline schema is rejected even when the
-// schema's output disagrees with the generic: the two would be unchecked,
-// conflicting sources of truth for the argument type. The default `O` for
-// the second overload omits `schema`, so an inline `schema` here is an
-// excess property, reported on the `schema` property itself.
+// The default `O` for the second overload omits `schema`, so an inline
+// `schema` here is an excess property, reported on the `schema` property
+// itself.
 registerTool<{ id: string }>(
   'explicitGenericWithDisagreeingSchema',
   (args) => args.id,
@@ -136,9 +118,6 @@ registerTool<{ id: string }>(
   },
 );
 
-// Same rule when the schema's output happens to agree with the explicit
-// generic: still rejected, since the explicit generic and the inline schema
-// remain two sources of truth for the same type.
 registerTool<{ id: string }>(
   'explicitGenericWithAgreeingSchema',
   (args) => args.id,

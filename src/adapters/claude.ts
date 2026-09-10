@@ -262,7 +262,6 @@ function parseResponse(data: unknown): ModelResponse {
       });
     }
     // Other block types (thinking, for example) carry nothing this loop needs.
-    // They survive the round trip through providerData below.
   }
 
   const usage = obj.usage as AnthropicUsage | undefined;
