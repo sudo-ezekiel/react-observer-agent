@@ -206,7 +206,7 @@ type AgentEvent =
 - `options.maxStateBytes` applies per key: a value whose JSON exceeds it is replaced by a truncation marker (section 4.2). Unset means no limit.
 - `options.onEvent` observes the loop (section 4.7). `options.onToolCall` fires once per user-tool outcome with the same payload as `tool_end`. Both are observation only; a callback that throws ends the interaction with an untyped error, so keep them cheap and safe.
 - On mount, the provider validates tool-name uniqueness and throws on duplicates.
-- On unmount, the provider aborts every interaction it owns. Each interaction runs under a signal linked from the caller's `send()` signal and a controller the provider aborts on unmount, so in-flight and queued interactions end with `ABORTED` exactly as a caller-side cancel would: `onConfirm` sees its `signal` fire (or is never asked), handlers see `context.signal` aborted, `onError` is not called, and `send()` still settles. A `send()` called through a stale reference after unmount resolves `ABORTED` without calling the model. React StrictMode's simulated unmount and remount in development gets a fresh controller, so it does not affect later sends.
+- On unmount, the provider aborts every interaction it owns. Each interaction runs under a signal linked from the caller's `send()` signal and a controller the provider aborts on unmount, so in-flight and queued interactions end with `ABORTED` exactly as a caller-side cancel would: `onConfirm` sees its `signal` fire (or is never asked), handlers see `context.signal` aborted, `onError` is not called, and `send()` still settles. That holds whether or not the consumer code cooperates: a confirmation whose UI unmounted without answering, or a handler that ignores its signal, no longer holds the interaction open (section 4.1). A `send()` called through a stale reference after unmount resolves `ABORTED` without calling the model. React StrictMode's simulated unmount and remount in development gets a fresh controller, so it does not affect later sends.
 - Prop updates take effect on the next `send()`: the provider reads `model`, `state`, `tools`, `permissions`, and `options` through refs, so an in-flight interaction keeps the values it started with. That covers `options.onError` too: the error an interaction ends with goes to the handler in the `options` object it started with, even if a re-render swapped in a new one meanwhile.
 
 ---
@@ -279,7 +279,7 @@ interface TokenUsage {
 
 | Code | Set by | `AgentResponse.message` | Reaches `onError` |
 |------|--------|-------------------------|-------------------|
-| `ABORTED` | The signal fired (checked per turn, after the model call, before each tool, after validation, after confirmation) | Empty | No |
+| `ABORTED` | The signal fired (checked per turn, after the model call, before each tool, after validation, after confirmation; an abort also ends a pending wait on the adapter, `onConfirm`, or a handler) | Empty | No |
 | `MAX_TURNS` | `maxTurns` exhausted while the model was still calling tools | Empty | Yes |
 | `ADAPTER_ERROR` | The adapter threw an `AdapterError`; `status` copied from it | Empty | Yes |
 | `TRUNCATED` | The model stopped with `stopReason: 'max_tokens'` and no tool calls | The partial text | Yes |
@@ -475,7 +475,8 @@ The model must support tool calling, since state reads and every action go throu
    a. If the signal is aborted, stop and return an ABORTED error
    b. Emit turn_start, then
       model.sendMessage({ messages, tools, systemPrompt, stateManifest, signal })
-      An AbortError from the adapter also ends the loop as ABORTED
+      The await is raced against the signal, so an abort ends it whether
+      the adapter rejects with an AbortError or ignores signal entirely
    c. Accumulate reported token usage
    d. No tool calls: this is the answer. stopReason max_tokens marks it
       TRUNCATED, refusal marks it REFUSED; either way the loop exits
@@ -493,10 +494,12 @@ The model must support tool calling, since state reads and every action go throu
         record status 'error'; the handler does not run
       - abort landed during validation: record 'cancelled', return ABORTED
       - confirm:true: run onConfirm with the validated value and the signal
-        (section 4.4); on deny or missing handler, record 'cancelled'
-      - execute handler(value, { signal }); serialize the result; record
-        'success' | 'confirmed' | 'error'; a rejection with AbortError after
-        the signal fired records 'cancelled' and returns ABORTED
+        (section 4.4), raced against the signal; on deny or missing
+        handler, record 'cancelled'
+      - execute handler(value, { signal }), raced against the signal;
+        serialize the result; record 'success' | 'confirmed' | 'error'; a
+        rejection with AbortError after the signal fired, or the race
+        losing to an abort, records 'cancelled' and returns ABORTED
       - recording = one toolCalls entry, one onToolCall, one tool_end
    f. Next turn with the grown message list
 6. Append the final assistant message when its content is non-empty
@@ -504,6 +507,10 @@ The model must support tool calling, since state reads and every action go throu
 ```
 
 When `maxTurns` is exhausted while the model is still calling tools, the loop returns an empty `message`, whatever `toolCalls` accumulated, and `error.code: 'MAX_TURNS'` (plus a debug warning). A cancelled interaction returns `error.code: 'ABORTED'` the same way. A truncated or refused answer returns the text that came back with `TRUNCATED` or `REFUSED`. None of these throw.
+
+Three awaits hand control to consumer code: the model call, `onConfirm`, and the tool handler. Each is raced against a promise that rejects with an `AbortError` when the signal fires, so an abort always ends the wait, whether or not the adapter, the confirmation UI, or the handler looks at the signal. The cancel paths take it from there: the call in flight is recorded `'cancelled'`, the interaction resolves with `error.code: 'ABORTED'`, and `onError` is not called. Without the race, a confirmation whose UI had unmounted with the provider never answered and the interaction parked forever: `send()` never settled, the queue behind it never drained, and `isProcessing` stayed true.
+
+Racing ends the wait; it does not cancel the work. JavaScript has no way to cancel a promise from outside, so a handler or adapter that ignores its signal keeps running to completion in the background after the interaction has moved on. Its result is discarded and reaches neither the transcript nor the model. Forwarding the signal to `fetch`, or to whatever the handler awaits, is what actually stops the work, and it is the reason the signal is handed to handlers, to `onConfirm`, and to the adapter at all.
 
 Exceptions thrown anywhere in the loop (adapter failures, a throwing `onToolCall` or `onEvent` callback, a throwing state getter) are caught by the provider, converted to an `AgentResponse` with `error` set (`ADAPTER_ERROR` with `status` for an `AdapterError`, no code otherwise), stored in `lastResponse`, and passed to `onError`. `send()` resolves for all of these; the single case where it rejects is `onError` itself throwing (section 3.3). Errors the loop returns rather than throws also reach `onError`, with one exception: `ABORTED` does not, since a cancel is a caller decision rather than an application failure.
 
