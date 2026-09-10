@@ -42,7 +42,7 @@ Agent responds: "You have Wireless Headphones in your cart."
    ```json
    {
      "name": "__readState",
-     "description": "Read specific keys from the application state.",
+     "description": "Read specific keys from the application state. Only request keys you need.",
      "parameters": {
        "type": "object",
        "properties": {
@@ -124,11 +124,12 @@ Adapter authors can use `stateManifest` to build richer system prompts if desire
 
 ## Interaction Queue
 
-`send()` is serialized per provider. The provider keeps three refs for this:
+`send()` is serialized per provider. The provider keeps four refs for this:
 
-- **`queueRef`** holds the tail promise of the queue. Each `send()` chains `runInteraction` onto it and replaces the tail with the new promise, swallowing its rejection so one broken interaction cannot stall the ones queued behind it. The caller still receives whatever its own interaction settled with.
+- **`queueRef`** holds the tail promise of the queue. Each `send()` chains `runInteraction` onto it and replaces the tail with the new promise, swallowing its rejection so one broken interaction cannot stall the ones queued behind it. The caller still receives whatever its own interaction settled with. `onError` is dispatched after the try/catch and after the generation-guarded state writes, so a throwing handler rejects the caller's promise without appending a second assistant entry, overwriting `lastResponse`, or firing `onError` again.
 - **`pendingRef`** counts calls that have been made but not settled. `isProcessing` is derived from `pendingRef > 0`, set synchronously in `send()` and cleared in a `finally`, so it goes true at the first call and stays true across the queue without flickering false between two queued interactions.
-- **`generationRef`** is bumped by `clearHistory()`. An interaction captures the generation when it starts and, on finishing, writes to the transcript, `history`, and `lastResponse` only if the generation is unchanged. A clear that lands mid-interaction therefore discards that interaction's records entirely: its user entry went with the clear, and its assistant entry never lands. The `send()` promise still resolves normally and `onError` still fires under the usual rules, since those belong to the caller rather than to the conversation.
+- **`generationRef`** is bumped by `clearHistory()`. An interaction captures the generation when it starts and, on finishing, writes to the transcript, `history`, and `lastResponse` only if the generation is unchanged. A clear that lands mid-interaction therefore discards that interaction's records entirely: its user entry went with the clear, and its assistant entry never lands. The `send()` promise still resolves normally and `onError` still fires under the usual rules, since those belong to the caller rather than to the conversation. `runInteraction` captures `optionsRef.current` next to the generation and uses that one object for the loop and for the final `onError`, so a re-render with a new inline `options` object mid-interaction cannot redirect the error to a handler the interaction did not start with.
+- **`unmountRef`** holds an `AbortController` the provider aborts in its mount effect's cleanup. It is created lazily, because a child can call `send()` from its own mount effect, which runs before the provider's. Every interaction runs under `linkSignals(sendOptions.signal, unmountController.signal)` (`src/utils/linkSignals.ts`), a signal that aborts as soon as either source does and carries the source's abort reason; `release()` in the interaction's `finally` drops the listeners, since a caller signal can outlive many interactions. Unmount therefore ends in-flight and queued interactions with `ABORTED` through the same checks a caller cancel goes through, and a `send()` through a stale reference after unmount links to the already-aborted controller and returns `ABORTED` at the loop's first check. After a real unmount the aborted controller stays put; only the mount effect replaces it, which is what keeps StrictMode's simulated unmount and remount from poisoning later sends.
 
 Two consequences of the queue:
 
@@ -205,6 +206,8 @@ Abort is checked at each turn start, after the model call, before each tool call
 | `error` | Handler threw, result not serializable, arguments failed validation, or `onConfirm` rejected with a non-abort error | yes |
 
 `isError` reaches the Anthropic API as `is_error: true` on the `tool_result` block. OpenAI has no equivalent flag, so its adapter ignores the field.
+
+The text recorded for a thrown handler or a rejected `onConfirm` comes from `describeError` (`src/utils/describeError.ts`), which the loop, the provider, both adapters, and `validateToolArgs` share: an `Error`'s `message` (then its `name`, then the fallback, if empty), a string as is, the `message` of an object that carries one, `JSON.stringify` of any other object when it yields more than `'{}'`, and `'Unknown error'` for `null`, `undefined`, or a value that cannot be serialized.
 
 ### Debug Logging
 

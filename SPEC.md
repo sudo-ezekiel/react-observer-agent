@@ -4,7 +4,7 @@
 > Author: Ezekiel
 > Status: Living document. Describes the library as implemented at v0.3.0.
 > Supersedes: 0.2.0 (July 28, 2026)
-> Last updated: September 9, 2026
+> Last updated: September 10, 2026
 
 ---
 
@@ -115,11 +115,11 @@ The package ships a minimal copy of the [Standard Schema v1](https://standardsch
 
 - `name` must be unique across all tools passed to a single provider. Uniqueness is enforced at the provider level, not at registration time, so tools can be composed from independent modules without global coordination. The provider throws on mount when it detects duplicates.
 - Names beginning with `__` are **reserved** for internal tools (`__readState` today). The provider rejects user tools with reserved names on mount.
-- `handler` runs when the agent invokes the tool as `handler(args, { signal })`. The loop always passes the context; the parameter is typed optional so handlers written against 0.2.0, which take one argument, keep their type. `signal` is the one given to `send()`, so a handler that forwards it to `fetch` stops when the interaction is cancelled. Its return value is serialized and fed back to the LLM, so return something meaningful (`"Added Headphones to cart"`) rather than `undefined`. A result `JSON.stringify` cannot serialize is a handler error, not a success.
+- `handler` runs when the agent invokes the tool as `handler(args, { signal })`. The loop always passes the context; the parameter is typed optional so handlers written against 0.2.0, which take one argument, keep their type. `signal` is linked to the one given to `send()` and to the provider's own lifetime, so a handler that forwards it to `fetch` stops when the interaction is cancelled or the provider unmounts. Its return value is serialized and fed back to the LLM, so return something meaningful (`"Added Headphones to cart"`) rather than `undefined`. A result `JSON.stringify` cannot serialize is a handler error, not a success.
 - **LLM visibility rule:** a tool is only exposed to the model when it has a `description`. When `parameters` is omitted, the provider substitutes the empty object schema `{ "type": "object", "properties": {} }`. A tool hidden for lacking a description is still executable if the model names it, since `canExecute` is the authority.
 - **Validation.** Arguments are validated before the handler runs, and before the confirmation prompt (section 4.4). With `schema` set, validation runs through `schema['~standard'].validate` (sync or async) and the handler, the confirmation prompt, and every report receive the value the schema returned, so defaults and transforms apply. Issues are formatted as `path: message`. Without `schema`, `parameters` is checked by the built-in validator, which covers a subset of JSON Schema (`type`, `properties`, `required`, `items`, `enum`) and ignores keywords outside it, so a richer schema validates on the parts the library understands rather than failing outright. Handlers using only `parameters` should still treat `args` as untrusted, since unvalidated keywords pass through.
 - **`parameters` and `schema` are independent.** `parameters` is what the model sees; `schema` is what the arguments are checked against. The library does not derive one from the other, so a tool with a `schema` should still carry `parameters` (or accept the empty object schema and let the model guess).
-- **Typing.** With `schema`, an un-annotated handler infers its argument type from the schema output, and an annotated handler must match it: an annotation that disagrees with the schema output is a compile error rather than a silent fall-through to the untyped overload. Without `schema`, the explicit generic (`registerTool<{ path: string }>(...)`), a pre-typed `ToolOptions` variable, no options at all, and one-argument handlers all compile as before.
+- **Typing.** With `schema`, an un-annotated handler infers its argument type from the schema output, and an annotated handler must match it: an annotation that disagrees with the schema output is a compile error rather than a silent fall-through to the untyped overload. An explicit type argument turns inference off, so `registerTool<T>(name, handler, { schema })` with an inline schema in the options literal is a compile error whether or not the schema output agrees with `T`; TypeScript reports TS2353 at the `schema` property, because an explicit `T` next to a schema would leave two unchecked sources of truth for the argument type. Drop the type argument and let the schema supply it. A variable typed as plain `ToolOptions` passes with or without an explicit type argument, since its schema output is `unknown` and there is nothing to check against. Without `schema`, the explicit generic (`registerTool<{ path: string }>(...)`), a pre-typed `ToolOptions` variable, no options at all, and one-argument handlers all compile as before.
 - `confirm: true` routes execution through the provider's `onConfirm` callback (section 4.4).
 
 ---
@@ -198,7 +198,8 @@ type AgentEvent =
 - `options.maxStateBytes` applies per key: a value whose JSON exceeds it is replaced by a truncation marker (section 4.2). Unset means no limit.
 - `options.onEvent` observes the loop (section 4.7). `options.onToolCall` fires once per user-tool outcome with the same payload as `tool_end`. Both are observation only; a callback that throws ends the interaction with an untyped error, so keep them cheap and safe.
 - On mount, the provider validates tool-name uniqueness and throws on duplicates.
-- Prop updates take effect on the next `send()`: the provider reads `model`, `state`, `tools`, `permissions`, and `options` through refs, so an in-flight interaction keeps the values it started with.
+- On unmount, the provider aborts every interaction it owns. Each interaction runs under a signal linked from the caller's `send()` signal and a controller the provider aborts on unmount, so in-flight and queued interactions end with `ABORTED` exactly as a caller-side cancel would: `onConfirm` sees its `signal` fire (or is never asked), handlers see `context.signal` aborted, `onError` is not called, and `send()` still settles. A `send()` called through a stale reference after unmount resolves `ABORTED` without calling the model. React StrictMode's simulated unmount and remount in development gets a fresh controller, so it does not affect later sends.
+- Prop updates take effect on the next `send()`: the provider reads `model`, `state`, `tools`, `permissions`, and `options` through refs, so an in-flight interaction keeps the values it started with. That covers `options.onError` too: the error an interaction ends with goes to the handler in the `options` object it started with, even if a re-render swapped in a new one meanwhile.
 
 ---
 
@@ -264,12 +265,12 @@ interface TokenUsage {
 
 - `send()` calls are **queued**. Each call chains onto the previous one, so interactions run strictly one at a time in call order and each starts from the transcript the previous one left. A queued call whose signal is already aborted when its turn comes returns `ABORTED` without calling the model. One failed interaction does not stall the ones queued behind it.
 - `isProcessing` is true from the moment a `send()` is called until the last queued call settles, with no false flicker between queued calls.
-- `send()` resolves rather than rejects. Every failure, including thrown exceptions, comes back as `AgentResponse.error`.
+- `send()` resolves rather than rejects for every failure the interaction itself produces: loop errors, adapter throws, a throwing state getter, `onToolCall`, or `onEvent` all come back as `AgentResponse.error`. The one exception is `options.onError` itself. It is called after the interaction's records are written, so a throwing `onError` propagates out of `send()` as a rejection with the state already settled: it fired once, `history` holds exactly one assistant entry for the interaction, `lastResponse` holds the real response, and the queue continues with the next call.
 
 **Error codes**
 
-| Code | Set by | `message` | Reaches `onError` |
-|------|--------|-----------|-------------------|
+| Code | Set by | `AgentResponse.message` | Reaches `onError` |
+|------|--------|-------------------------|-------------------|
 | `ABORTED` | The signal fired (checked per turn, after the model call, before each tool, after validation, after confirmation) | Empty | No |
 | `MAX_TURNS` | `maxTurns` exhausted while the model was still calling tools | Empty | Yes |
 | `ADAPTER_ERROR` | The adapter threw an `AdapterError`; `status` copied from it | Empty | Yes |
@@ -282,7 +283,7 @@ Cumulative `toolCalls` and `usage` are kept on every error response the loop pro
 **History semantics**
 
 - Every interaction that started produces exactly one `user` entry and one `assistant` entry, in that order. The user entry is appended when the queued call begins executing, not when `send()` was called, so `history` always alternates user, assistant. Tool activity rides on the assistant entry's `toolCalls`; standalone `tool` entries are reserved for future use.
-- An assistant entry whose interaction ended with an error carries it on `error`. This includes `ABORTED` and the thrown-exception path, where `content` is `''` and `toolCalls` is `[]`.
+- An assistant entry whose interaction ended with an error carries it on `error`. This includes `ABORTED`, where `content` is `''` and `toolCalls` holds whatever was recorded before the abort landed (a `cancelled` entry for a call that was in flight included), and the thrown-exception path, where `content` is `''` and `toolCalls` is `[]`.
 - History is scoped to the provider instance. Unmount clears it; `clearHistory()` clears it manually.
 - On each `send()`, the prior LLM-facing transcript is replayed verbatim, including assistant tool calls and the tool results answering them, so the agent can reason about what it already did. The provider keeps this transcript separately from the user-facing `history`.
 - An aborted turn is **not** added to the transcript. A cancel can land between an assistant tool call and the result answering it, and providers reject that shape. A turn whose adapter threw is likewise dropped. A final assistant message with empty content is not persisted either.
@@ -496,7 +497,7 @@ The model must support tool calling, since state reads and every action go throu
 
 When `maxTurns` is exhausted while the model is still calling tools, the loop returns an empty `message`, whatever `toolCalls` accumulated, and `error.code: 'MAX_TURNS'` (plus a debug warning). A cancelled interaction returns `error.code: 'ABORTED'` the same way. A truncated or refused answer returns the text that came back with `TRUNCATED` or `REFUSED`. None of these throw.
 
-Exceptions thrown anywhere in the loop (adapter failures, throwing callbacks, a throwing state getter) are caught by the provider, converted to an `AgentResponse` with `error` set (`ADAPTER_ERROR` with `status` for an `AdapterError`, no code otherwise), stored in `lastResponse`, and passed to `onError`. `send()` resolves rather than rejects. Errors the loop returns rather than throws also reach `onError`, with one exception: `ABORTED` does not, since a cancel is a caller decision rather than an application failure.
+Exceptions thrown anywhere in the loop (adapter failures, a throwing `onToolCall` or `onEvent` callback, a throwing state getter) are caught by the provider, converted to an `AgentResponse` with `error` set (`ADAPTER_ERROR` with `status` for an `AdapterError`, no code otherwise), stored in `lastResponse`, and passed to `onError`. `send()` resolves for all of these; the single case where it rejects is `onError` itself throwing (section 3.3). Errors the loop returns rather than throws also reach `onError`, with one exception: `ABORTED` does not, since a cancel is a caller decision rather than an application failure.
 
 ### 4.2 Pull-based state and `__readState`
 
@@ -562,6 +563,8 @@ The consumer owns the UI: modal, toast, inline card, `window.confirm`, anything 
 | `cancelled` | `confirm: true` tool denied, no `onConfirm` handler, or the interaction was aborted during validation, confirmation, or the handler | `{ status: 'cancelled', reason }` | no |
 | `denied` | Name failed the `canExecute` check, or passed it with no matching definition | `{ error }` | yes |
 | `error` | Handler threw, result not serializable, arguments failed validation, or `onConfirm` rejected with something other than an `AbortError` | `{ error }` | yes |
+
+When a handler throws or `onConfirm` rejects with something other than an `AbortError`, the recorded `result` is the text of what was thrown: an `Error`'s `message`, a thrown string as is, the `message` of a rejected object that carries one, other objects JSON-stringified, and `'Unknown error'` for `null` or `undefined`. The `{ error }` tool message the model sees carries the same text.
 
 Every outcome above produces exactly one `toolCalls` entry, one `onToolCall`, and one `tool_end`. `args` on all three is the validated value once validation succeeded, and the raw model arguments on the `denied` and invalid-arguments paths where no validated value exists. Neither fires for `__readState`.
 

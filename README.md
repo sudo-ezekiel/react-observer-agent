@@ -163,7 +163,7 @@ registerTool('addToCart', (args) => addToCart(args.productId, args.qty), {
 });
 ```
 
-Annotating the handler is allowed when the annotation matches the schema output. An annotation that disagrees with it is a compile error rather than a silent fallback to the untyped signature.
+Annotating the handler is allowed when the annotation matches the schema output. An annotation that disagrees with it is a compile error rather than a silent fallback to the untyped signature. An explicit type argument (`registerTool<T>(...)`) next to an inline `schema` is also a compile error, whether or not the two agree, since the type argument turns inference off; drop it and let the schema supply the type.
 
 **Human confirmation.** Tools registered with `confirm: true` route through your `onConfirm` handler before running. You own the UI: modal, toast, `window.confirm`, anything that resolves a boolean. The handler receives `{ toolName, args, description, signal }`, where `args` is the validated value and `signal` aborts if the interaction is cancelled while your prompt is open. If no handler is provided, the tool is skipped with status `cancelled`. Confirmation is never silently bypassed. Use it for anything irreversible or user-visible.
 
@@ -217,8 +217,9 @@ Each `send()` runs a turn loop of at most `options.maxTurns` model round trips (
 - **One at a time.** Concurrent `send()` calls queue and run strictly in call order, each starting from the transcript the previous one left. `history` therefore always alternates user, assistant, and `isProcessing` stays true from the first call until the last queued one settles.
 - **Conversation memory.** The prior LLM transcript is replayed with tool calls and their results intact across `send()` calls, so the agent remembers what it already did. `clearHistory()` resets it. Calling `clearHistory()` while an interaction is running discards that interaction's records: its `send()` still resolves and `onError` still fires, but nothing it produced lands in `history`, `lastResponse`, or the transcript.
 - **Events.** `options.onEvent` receives `turn_start`, `state_read`, `tool_start`, and `tool_end` as the loop runs, for progress UI and logging. Every `tool_start` gets exactly one `tool_end`; `tool_start` carries the raw arguments from the model and `tool_end` the validated value plus the final status.
-- **Cancellation.** `send(message, { signal })` takes an `AbortSignal`. The same signal reaches the adapter, `onConfirm`, and every tool handler as `context.signal`. Aborts resolve with `error.code: 'ABORTED'` rather than throwing, and deliberately do not fire `onError`, since a cancel is a caller decision, not a failure.
-- **Typed errors.** `error.code` is one of the codes below. Every code except `ABORTED` reaches `onError`. An exception that is not an `AdapterError` (a throwing `onToolCall` callback, for example) produces an error with no code.
+- **Cancellation.** `send(message, { signal })` takes an `AbortSignal`. A signal linked to it reaches the adapter, `onConfirm`, and every tool handler as `context.signal`. Aborts resolve with `error.code: 'ABORTED'` rather than throwing, and deliberately do not fire `onError`, since a cancel is a caller decision, not a failure.
+- **Unmount.** Unmounting the provider aborts everything it owns. In-flight and queued interactions end with `error.code: 'ABORTED'` the same way a cancel does: `onConfirm`'s `signal` fires, handlers see `context.signal` aborted, `onError` is not called, and `send()` still settles. A `send()` reached through a stale reference after unmount resolves `ABORTED` without calling the model. StrictMode's simulated unmount in development gets a fresh controller and does not affect later sends.
+- **Typed errors.** `error.code` is one of the codes below. Every code except `ABORTED` reaches `onError`. An exception that is not an `AdapterError` (a throwing `onToolCall` callback, for example) produces an error with no code. `send()` resolves with all of these; the one thing that makes it reject is `onError` itself throwing, and by then `history` and `lastResponse` are already written.
 - **History carries errors.** The assistant entry of an interaction that ended with an error has that error on `entry.error`, `ABORTED` included, so a chat UI can render a failed turn in place.
 - **Token usage.** `AgentResponse.usage` totals tokens across every model call in the interaction, when the adapter reports them. `promptTokens` is the total input including any cached portion; `cacheReadTokens` and `cacheWriteTokens` are subsets of it, present only when a provider reported them.
 
@@ -293,7 +294,7 @@ On `registerTool`: a tool needs a `description` to be shown to the model, and om
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `send` | `(message, options?) => Promise<AgentResponse>` | Queued; `options.signal` cancels; resolves rather than rejects on errors |
+| `send` | `(message, options?) => Promise<AgentResponse>` | Queued; `options.signal` cancels; resolves rather than rejects on errors, unless `onError` itself throws |
 | `isProcessing` | `boolean` | True while any `send()` is pending or running |
 | `history` | `ConversationEntry[]` | User-facing conversation history; assistant entries carry `error` when the interaction failed |
 | `clearHistory` | `() => void` | Resets history, the LLM transcript, and `lastResponse` |
@@ -320,7 +321,7 @@ On `registerTool`: a tool needs a `description` to be shown to the model, and om
 | `maxTokens` | Not sent | Default `16000` |
 | `cache` | Not applicable | Default `true`; `false` disables prompt caching |
 
-Tool call statuses in `AgentResponse.toolCalls`, `onToolCall`, and `tool_end`: `success`, `confirmed`, `cancelled`, `denied`, `error`.
+Tool call statuses in `AgentResponse.toolCalls`, `onToolCall`, and `tool_end`: `success`, `confirmed`, `cancelled`, `denied`, `error`. When a handler throws or `onConfirm` rejects, `result` keeps the text of what was thrown: an `Error`'s message, a thrown string as is, the `message` of a rejected object, other objects JSON-stringified, `'Unknown error'` for `null` or `undefined`. The model is told the same text.
 
 The full contracts, including the `ModelAdapter` interface for writing custom adapters, are in [SPEC.md](SPEC.md).
 
