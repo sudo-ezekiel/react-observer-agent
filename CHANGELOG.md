@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+No functional change. `dist` is byte for byte identical to 0.3.0.
+
+0.3.0 was published from a working tree rather than from `main`, a few minutes before the commit it contained
+was merged. The code that went out was correct, but the release was not reproducible from a tagged commit.
+This releases the same code from `main`, with the tag on the release commit.
+
 ## 0.3.0
 
 ### Fixed
